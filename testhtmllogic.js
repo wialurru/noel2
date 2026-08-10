@@ -49,8 +49,7 @@ vm.createContext(sandbox);
 vm.runInContext(scriptSrc, sandbox, { filename: "index.html#script" });
 
 // --- Ahora probamos las funciones expuestas globalmente en el sandbox ---
-const UPLOADS = "C:\\Users\\jupit\\.claude\\uploads\\4d134a0c-992f-42de-a9af-9c62487e173a\\";
-const PRODUCT_REPORT = UPLOADS + "3893fe19-ProductReport.csv";
+const PRODUCT_REPORT = __dirname + "/testdata/ProductReport.csv";
 
 const buf = new Uint8Array(fs.readFileSync(PRODUCT_REPORT));
 const text = sandbox.decodeBuffer(buf);

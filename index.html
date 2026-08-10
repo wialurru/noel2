@@ -185,13 +185,16 @@
   .grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
   .grid-2x3 { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
   .grid-side { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 12px; flex: 1; min-height: 0; }
+  /* Vista Motivos: gráficos arriba y la tabla de OF a ancho completo debajo */
+  .motivos-wrap { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
+  #panelParoOf { flex: 0 0 32%; }
   .stack { display: grid; grid-template-rows: 1fr 1fr; gap: 12px; min-height: 0; }
   .row-controls { flex-shrink: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
   /* Solo se muestra el nivel de histórico / la sub-tabla de detalle activos */
-  .hist-level, .detalle-sub { display: none; }
+  .hist-level, .detalle-sub, .paros-sub { display: none; }
   .hist-level.active { display: grid; }
-  .detalle-sub.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .detalle-sub.active, .paros-sub.active { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }
   .detalle-sub.stack.active { display: grid; }
   @media (max-width: 1180px) {
     .grid-2x3 { grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr); }
@@ -205,10 +208,11 @@
   #welcome { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; }
   #welcome .welcome-title { font-size: 19px; font-weight: 650; margin: 0; }
   #welcome .welcome-sub { font-size: 13px; color: var(--text-secondary); margin: 0; text-align: center; max-width: 620px; line-height: 1.55; }
-  #uploadSection { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; max-width: 820px; }
+  #uploadSection { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; width: 100%; max-width: 1140px; }
   .pop-panel #uploadSection { grid-template-columns: 1fr; max-width: none; width: 460px; }
   .pop-panel .dropzone { padding: 14px; }
   .pop-panel .dropzone p { display: none; }
+  @media (max-width: 1080px) { #uploadSection { grid-template-columns: 1fr 1fr; max-width: 820px; } }
   @media (max-width: 780px) { #uploadSection { grid-template-columns: 1fr; } }
   .dropzone {
     border: 2px dashed var(--border);
@@ -274,9 +278,10 @@
      Jerarquía explícita: la primera tarjeta (Producción) es el volumen y manda
      en tamaño; el resto son indicadores de salud con semáforo en el borde
      izquierdo, para que un vistazo periférico ya diga si algo va mal. */
-  #kpiRow { flex-shrink: 0; display: grid; grid-template-columns: 1.35fr repeat(4, 1fr); gap: 10px; }
-  @media (max-width: 1180px) { #kpiRow { grid-template-columns: repeat(3, 1fr); } }
-  @media (max-width: 700px) { #kpiRow { grid-template-columns: repeat(2, 1fr); } }
+  #kpiRow, #paroKpiRow { flex-shrink: 0; display: grid; grid-template-columns: 1.35fr repeat(4, 1fr); gap: 10px; }
+  #paroKpiRow:empty { display: none; }
+  @media (max-width: 1180px) { #kpiRow, #paroKpiRow { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 700px) { #kpiRow, #paroKpiRow { grid-template-columns: repeat(2, 1fr); } }
   .stat-tile { padding: 11px 13px; border-left: 3px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
   .stat-tile.lead { border-left-color: var(--s1); }
   .stat-tile.ok { border-left-color: var(--good); }
@@ -548,6 +553,12 @@
         <p>Añade este archivo si además quieres ver el desglose de disponibilidad y paros por turno. También acumula varios cortes sin duplicar.</p>
         <div class="status" id="status2"></div>
       </label>
+      <label class="dropzone" id="dz3">
+        <input type="file" id="file3" accept=".csv" multiple>
+        <h3>Detalle de paradas (His_Paro_Groups) <span class="badge-optional">opcional</span></h3>
+        <p>Una fila por parada con el motivo concreto (ajuste de etiquetadora, de envasadora, avería…). Es lo que permite montar el Pareto real de paros y cruzarlo con la OF. También acumula sin duplicar.</p>
+        <div class="status" id="status3"></div>
+      </label>
     </section>
   </div>
   <main class="views" id="views" hidden>
@@ -587,21 +598,55 @@
       </div>
     </section>
 
-    <!-- ============ PAROS Y TURNOS (His_CT_Group) ============ -->
+    <!-- ============ PAROS Y TURNOS ============ -->
     <section class="view" data-view="paros">
-      <div class="grid-2x2" id="parosGrid">
-        <div class="card chart-card" id="chartParosPareto"></div>
-        <div class="card chart-card tall" id="chartDisponibilidadTurnos"></div>
-        <div class="card chart-card tall" id="chartProduccionTurno"></div>
-        <div class="panel">
-          <header>
-            <h3>Producción por turno y línea</h3>
-            <span class="sub">Reparto Mañana/Tarde completo — no le afecta el filtro Turno</span>
-          </header>
-          <div class="body flush"><div id="tableTurno"></div></div>
+      <div class="row-controls">
+        <span class="seg-label">Vista</span>
+        <div class="seg" id="parosSeg" role="group" aria-label="Vista de paros">
+          <button data-sub="motivos">Motivos (Pareto)</button>
+          <button data-sub="turnos">Turnos y disponibilidad</button>
         </div>
+        <span class="row-count" id="parosHint"></span>
       </div>
-      <div class="empty-note" id="parosEmpty" hidden>Carga el CSV <strong>His_CT_Group</strong> (botón 📂 arriba a la derecha) para ver paros, averías y disponibilidad por turno.</div>
+
+      <!-- Motivos: necesita His_Paro_Groups (una fila por parada, con motivo) -->
+      <div class="paros-sub" data-sub="motivos">
+        <div class="motivos-wrap" id="motivosGrid">
+          <div id="paroKpiRow"></div>
+          <div class="grid-side">
+            <div class="card chart-card" id="chartParetoMotivos"></div>
+            <div class="card chart-card" id="chartParosLinea"></div>
+          </div>
+          <!-- A ancho completo: es la tabla que cruza paradas con OF/artículo/kg
+               y necesita sitio para leerse sin scroll horizontal. -->
+          <div class="panel" id="panelParoOf">
+            <header>
+              <h3>OF más afectadas por paradas</h3>
+              <span class="sub">Cruzado con ProductReport por nº de OF — clic en una fila para filtrar por su línea</span>
+              <span class="right row-count" id="countParoOf"></span>
+            </header>
+            <div class="body flush"><div id="tableParoOf"></div></div>
+          </div>
+        </div>
+        <div class="empty-note" id="motivosEmpty" hidden>Carga el CSV <strong>His_Paro_Groups</strong> (botón 📂 arriba a la derecha) para ver el Pareto de motivos de parada.</div>
+      </div>
+
+      <!-- Turnos: necesita His_CT_Group -->
+      <div class="paros-sub" data-sub="turnos">
+        <div class="grid-2x2" id="parosGrid">
+          <div class="card chart-card" id="chartParosPareto"></div>
+          <div class="card chart-card tall" id="chartDisponibilidadTurnos"></div>
+          <div class="card chart-card tall" id="chartProduccionTurno"></div>
+          <div class="panel">
+            <header>
+              <h3>Producción por turno y línea</h3>
+              <span class="sub">Reparto Mañana/Tarde completo — no le afecta el filtro Turno</span>
+            </header>
+            <div class="body flush"><div id="tableTurno"></div></div>
+          </div>
+        </div>
+        <div class="empty-note" id="parosEmpty" hidden>Carga el CSV <strong>His_CT_Group</strong> (botón 📂 arriba a la derecha) para ver disponibilidad y producción por turno.</div>
+      </div>
     </section>
 
     <!-- ============ HISTÓRICO: un nivel a la vez, con drill-down ============ -->
@@ -897,6 +942,19 @@ const CT_COLS = {
   operarios: "Operarios", horasOperarioTotales: "Horas operario totales (h)"
 };
 
+// His_Paro_Groups: una fila POR PARADA, con el motivo concreto ("AJUSTE
+// ETIQUETADORA", "AVERÍA PRODUCCIÓN"…). Es el detalle que a His_CT_Group le
+// falta: allí los paros vienen ya sumados en 6 columnas genéricas (Ajustes, AV,
+// Cambios…), aquí se sabe QUÉ máquina paró y cuánto tiempo exacto.
+const PARO_COLS = {
+  linea: "Grupo Trabajo", area: "Area", periodo: "Fecha de Carga OF",
+  producto: "SKU", desc: "Producto", of: "Cod_OF", turno: "Turno",
+  motivo: "Paro", tipoOee: "Tipo Paro OEE", nivel2: "Desc. paro Nivel 2",
+  de: "De", a: "A", lote: "Lote",
+  tiempoTotal: "TIEMPO TOTAL", tDisponibilidad: "DISPONIBILIDAD",
+  tProgramado: "PARO PROGRAMADO", tNoAfectaOee: "NO AFECTA OEE"
+};
+
 // Solo 2 turnos reales: Mañana (corta fijo a las 14h) y Tarde (arranca fijo a las 14h)
 function parseEsDateTime(v) {
   if (!v) return null;
@@ -1051,13 +1109,68 @@ function mapCtRows(header, index, dataRows) {
   return out;
 }
 
+// His_Paro_Groups sí trae el turno REAL de cada parada ("2-MAÑANA"/"3-TARDE"),
+// no hay que repartirlo proporcionalmente como en ProductReport/His_CT_Group.
+// Aparece también "1-NOCHE" (arranques a las 22h que Mapex imputa a la OF del
+// día siguiente): el dashboard es de 2 turnos, y esas 22h caen en la franja
+// 14-24 que shiftSecondsSplit ya llama "tarde", así que se pliega ahí para no
+// inventar un tercer turno. El texto original se guarda en turnoRaw.
+function canonTurno(v) {
+  const t = String(v || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
+  if (t.includes("MANANA")) return "manana";
+  if (t.includes("TARDE") || t.includes("NOCHE")) return "tarde";
+  return "";
+}
+
+function mapParoRows(header, index, dataRows) {
+  const out = [];
+  let skipped = 0;
+  for (const r of dataRows) {
+    const linea = (getCol(r, index, PARO_COLS.linea) || "").trim();
+    const periodo = parseEsDate(getCol(r, index, PARO_COLS.periodo));
+    const motivo = (getCol(r, index, PARO_COLS.motivo) || "").trim();
+    // El motivo es lo único que aporta este archivo frente a His_CT_Group: una
+    // fila sin él no sirve para el Pareto, así que se descarta y se avisa.
+    if (!linea || !periodo || !motivo) { skipped++; continue; }
+    const nivel2 = (getCol(r, index, PARO_COLS.nivel2) || "").trim();
+    out.push({
+      linea,
+      area: (getCol(r, index, PARO_COLS.area) || "").trim(),
+      periodo,
+      producto: (getCol(r, index, PARO_COLS.producto) || "").trim(),
+      desc: (getCol(r, index, PARO_COLS.desc) || "").trim(),
+      of: (getCol(r, index, PARO_COLS.of) || "").trim(),
+      turnoRaw: (getCol(r, index, PARO_COLS.turno) || "").trim(),
+      turno: canonTurno(getCol(r, index, PARO_COLS.turno)),
+      motivo,
+      nivel2,
+      // "AVERÍAS (AV)" vs "PARADAS NO PLANIFICADAS (PNP)": una avería es un fallo
+      // del equipo y un ajuste es tiempo de puesta a punto — mezclarlos en el
+      // mismo Pareto oculta que 6 averías pueden pesar más que 400 ajustes.
+      esAveria: /AVER/i.test(nivel2.normalize("NFD").replace(/[̀-ͯ]/g, "")),
+      tipoOee: (getCol(r, index, PARO_COLS.tipoOee) || "").trim(),
+      lote: (getCol(r, index, PARO_COLS.lote) || "").trim(),
+      inicio: parseEsDateTime(getCol(r, index, PARO_COLS.de)),
+      fin: parseEsDateTime(getCol(r, index, PARO_COLS.a)),
+      // Segundos. Comprobado contra el CSV real: TIEMPO TOTAL == (A - De) exacto
+      // en las 2.059 filas, y == DISPONIBILIDAD + PARO PROGRAMADO + NO AFECTA OEE.
+      segundos: parseEsNumber(getCol(r, index, PARO_COLS.tiempoTotal)) || 0,
+      segDisponibilidad: parseEsNumber(getCol(r, index, PARO_COLS.tDisponibilidad)) || 0,
+      segProgramado: parseEsNumber(getCol(r, index, PARO_COLS.tProgramado)) || 0,
+      segNoAfectaOee: parseEsNumber(getCol(r, index, PARO_COLS.tNoAfectaOee)) || 0,
+      semana: isoWeekInfo(periodo)
+    });
+  }
+  return { rows: out, skipped };
+}
+
 /* ============================================================
    3. ESTADO GLOBAL
    ============================================================ */
 
 const state = {
-  productRows: [], ctRows: [],
-  fileLog: { pr: [], ct: [] },
+  productRows: [], ctRows: [], paroRows: [],
+  fileLog: { pr: [], ct: [], paro: [] },
   filters: { desde: null, hasta: null, areas: new Set(), lineas: new Set(), turno: "ambos", dia: "todos" },
   sort: { table: "articulo", col: "kg", dir: "desc" },
   sortOF: { col: "mermaPct", dir: "desc" },
@@ -1068,7 +1181,8 @@ const state = {
     histOffset: { mes: null, semana: null, dia: null },
     tab: "resumen",        // pestaña activa
     histLevel: "mes",      // nivel visible del histórico
-    detalleSub: "articulo" // sub-tabla activa en Detalle
+    detalleSub: "articulo", // sub-tabla activa en Detalle
+    parosSub: "motivos"    // sub-vista activa en Paros
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -1140,6 +1254,28 @@ function mergeCtRows(newRows) {
     if (existingKeys.has(k)) { dup++; continue; }
     existingKeys.add(k);
     state.ctRows.push(r);
+    added++;
+  }
+  return { added, dup };
+}
+
+// Una parada queda identificada por dónde, cuándo empieza y acaba, en qué OF y
+// por qué. Comprobado contra el CSV real: 0 colisiones en 2.059 filas, así que
+// re-subir el mismo corte (o dos cortes solapados) no duplica nada.
+function paroRowKey(r) {
+  return r.linea + "||" + r.of + "||" +
+    (r.inicio ? r.inicio.getTime() : "x") + "||" +
+    (r.fin ? r.fin.getTime() : "x") + "||" + r.motivo;
+}
+
+function mergeParoRows(newRows) {
+  const existingKeys = new Set(state.paroRows.map(paroRowKey));
+  let added = 0, dup = 0;
+  for (const r of newRows) {
+    const k = paroRowKey(r);
+    if (existingKeys.has(k)) { dup++; continue; }
+    existingKeys.add(k);
+    state.paroRows.push(r);
     added++;
   }
   return { added, dup };
@@ -1245,6 +1381,16 @@ function setDetalleSub(sub) {
 
 document.querySelectorAll("#detalleSeg button").forEach(btn => {
   btn.addEventListener("click", () => setDetalleSub(btn.dataset.sub));
+});
+
+function setParosSub(sub) {
+  state.ui.parosSub = sub;
+  document.querySelectorAll("#parosSeg button").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
+  document.querySelectorAll(".paros-sub").forEach(g => g.classList.toggle("active", g.dataset.sub === sub));
+}
+
+document.querySelectorAll("#parosSeg button").forEach(btn => {
+  btn.addEventListener("click", () => setParosSub(btn.dataset.sub));
 });
 
 // --- Panel de ajustes ---------------------------------------------------
@@ -1364,6 +1510,17 @@ function updateStatusCT() {
     (totalDup ? ` · ${totalDup} duplicadas omitidas` : "");
 }
 
+function updateStatusParo() {
+  const status = document.getElementById("status3");
+  const log = state.fileLog.paro;
+  const totalDup = log.reduce((s, e) => s + e.dup, 0);
+  const totalSkipped = log.reduce((s, e) => s + e.skipped, 0);
+  status.className = "status ok";
+  status.textContent = `✓ ${log.length} archivo${log.length === 1 ? "" : "s"} · ${state.paroRows.length.toLocaleString("es-ES")} paradas acumuladas` +
+    (totalDup ? ` · ${totalDup} duplicadas omitidas` : "") +
+    (totalSkipped ? ` · ${totalSkipped} descartadas sin línea/fecha/motivo` : "");
+}
+
 // Al cargar el primer archivo la pantalla de bienvenida desaparece y las
 // dropzones se mudan al popover "Datos" de la barra superior: cargar CSV es una
 // acción semanal, no merece ocupar sitio permanente en la pantalla de trabajo.
@@ -1406,16 +1563,46 @@ setupDropzone("dz2", "file2", "status2", (header, index, dataRows, name) => {
   updateStatusCT();
 });
 
-// His_CT_Group es opcional: sin él la pestaña de paros y la tabla de tramos no
-// tienen nada que enseñar, así que se desactivan en vez de mostrarse vacías.
+setupDropzone("dz3", "file3", "status3", (header, index, dataRows, name) => {
+  const { rows, skipped } = mapParoRows(header, index, dataRows);
+  const { added, dup } = mergeParoRows(rows);
+  state.fileLog.paro.push({ name, added, dup, skipped });
+  // Mismo motivo que en His_CT_Group: si este archivo trae una línea/área que
+  // ProductReport no mencionó, sin esto el filtro la descartaría en silencio y
+  // sus paradas no aparecerían en ningún Pareto.
+  for (const a of new Set(rows.map(r => r.area))) state.filters.areas.add(a);
+  for (const l of new Set(rows.map(r => r.linea))) state.filters.lineas.add(l);
+  applyCtAvailability();
+  renderFilters();
+  renderAll();
+  updateStatusParo();
+});
+
+// Los dos archivos de paros son opcionales e independientes: His_CT_Group da
+// disponibilidad y reparto por turno, His_Paro_Groups da el motivo de cada
+// parada. La pestaña se habilita si hay CUALQUIERA de los dos, y dentro cada
+// sub-vista se activa solo si tiene su archivo.
 function applyCtAvailability() {
-  const has = state.ctRows.length > 0;
-  document.getElementById("parosGrid").hidden = !has;
-  document.getElementById("parosEmpty").hidden = has;
-  document.getElementById("tramosBlock").hidden = !has;
+  const hasCt = state.ctRows.length > 0;
+  const hasParo = state.paroRows.length > 0;
+  document.getElementById("parosGrid").hidden = !hasCt;
+  document.getElementById("parosEmpty").hidden = hasCt;
+  document.getElementById("tramosBlock").hidden = !hasCt;
+  document.getElementById("motivosGrid").hidden = !hasParo;
+  document.getElementById("motivosEmpty").hidden = hasParo;
+
   const tabParos = document.querySelector('#tabbar button[data-tab="paros"]');
-  tabParos.disabled = !has;
-  tabParos.title = has ? "" : "Necesita el CSV His_CT_Group";
+  tabParos.disabled = !hasCt && !hasParo;
+  tabParos.title = (hasCt || hasParo) ? "" : "Necesita el CSV His_CT_Group o His_Paro_Groups";
+
+  const btnMotivos = document.querySelector('#parosSeg button[data-sub="motivos"]');
+  const btnTurnos = document.querySelector('#parosSeg button[data-sub="turnos"]');
+  btnMotivos.title = hasParo ? "" : "Necesita el CSV His_Paro_Groups";
+  btnTurnos.title = hasCt ? "" : "Necesita el CSV His_CT_Group";
+  // Si solo hay uno de los dos, abrir directamente el que tiene datos en vez de
+  // dejar al usuario mirando un panel vacío.
+  if (hasParo && !hasCt) setParosSub("motivos");
+  else if (hasCt && !hasParo && state.ui.parosSub === "motivos") setParosSub("turnos");
 }
 
 document.getElementById("btnReset").addEventListener("click", () => location.reload());
@@ -1738,6 +1925,25 @@ function getFilteredCtRowsBase() {
 function getFilteredCtRows() {
   const { turno } = state.filters;
   return applyTurnoFilter(getFilteredCtRowsBase(), turno, CT_TURNO_FIELDS);
+}
+
+// A diferencia de ProductReport y His_CT_Group, aquí NO hay que repartir nada
+// por turno: cada parada ya viene con su turno real, así que el filtro es una
+// comparación exacta y los minutos que salen son minutos de verdad, no una
+// fracción estimada a partir del solape horario.
+// La fecha usada es "Fecha de Carga OF", no la hora de la parada, para que el
+// paro caiga en el mismo día que la OF a la que pertenece en ProductReport
+// (Mapex imputa los arranques de noche a la jornada siguiente).
+function getFilteredParoRows() {
+  const { desde, hasta, areas, lineas, turno, dia } = state.filters;
+  if (!desde || !hasta) return [];
+  const hastaEnd = new Date(hasta.getTime() + 86399999);
+  return state.paroRows.filter(r =>
+    r.periodo >= desde && r.periodo <= hastaEnd &&
+    areas.has(r.area) && lineas.has(r.linea) &&
+    passesDiaFilter(r.periodo, dia) &&
+    (turno === "ambos" || r.turno === turno)
+  );
 }
 
 // Ventana inmediatamente anterior, del mismo número de días, con los mismos
@@ -2107,7 +2313,9 @@ function computeAlerts(rows, ctRows) {
 // donde está su causa — de "algo va mal" a "esto es lo que pasa" en un clic.
 function focusLinea(linea, tab) {
   state.filters.lineas = new Set([linea]);
-  const area = (state.productRows.find(r => r.linea === linea) || state.ctRows.find(r => r.linea === linea) || {}).area;
+  const area = (state.productRows.find(r => r.linea === linea) ||
+    state.ctRows.find(r => r.linea === linea) ||
+    state.paroRows.find(r => r.linea === linea) || {}).area;
   if (area) state.filters.areas = new Set([area]);
   renderFilters();
   renderAll();
@@ -2739,9 +2947,278 @@ function renderParos(ctRows) {
   };
   const paretoItems = Object.entries(catTotals).filter(([, v]) => v > 0).map(([k, v]) => ({ label: catLabels[k] || k, value: v / 60 })).sort((a, b) => b.value - a.value);
 
-  renderBarChart("chartParosPareto", "Paros por motivo (Pareto)", "Minutos acumulados en la selección actual, agrupado por línea (Paros Ajustes / Averías / Cambios de His_CT_Group)",
+  renderBarChart("chartParosPareto", "Paros por categoría", "Minutos acumulados en la selección, en las 6 categorías genéricas de His_CT_Group. El desglose por máquina está en la vista Motivos.",
     paretoItems, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s2") }
   );
+}
+
+/* ============================================================
+   10.2 MOTIVOS DE PARADA (His_Paro_Groups) — Pareto real
+   ============================================================ */
+
+const fmtMin = n => n === null || n === undefined || Number.isNaN(n) ? "—" : fmtInt(n) + " min";
+
+// Minutos de parada en horas:minutos — 1.164 min no dice nada, 19 h 24 min sí.
+function fmtDur(segundos) {
+  if (segundos === null || segundos === undefined || Number.isNaN(segundos)) return "—";
+  const totalMin = Math.round(segundos / 60);
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  return h > 0 ? `${fmtInt(h)} h ${String(m).padStart(2, "0")} min` : `${m} min`;
+}
+
+// Agrupa por el campo que se le pida (motivo, línea, turno…) devolviendo
+// siempre minutos + nº de paradas + reparto avería/ajuste, que es lo que
+// consumen tanto el Pareto como las tablas.
+function aggregateParos(paroRows, keyFn) {
+  const map = new Map();
+  for (const r of paroRows) {
+    const key = keyFn(r);
+    if (key === null || key === undefined || key === "") continue;
+    let g = map.get(key);
+    if (!g) { g = { key, segundos: 0, paradas: 0, segAveria: 0, segAjuste: 0, lineas: new Set(), ofs: new Set() }; map.set(key, g); }
+    g.segundos += r.segundos;
+    g.paradas++;
+    if (r.esAveria) g.segAveria += r.segundos; else g.segAjuste += r.segundos;
+    g.lineas.add(r.linea);
+    if (r.of) g.ofs.add(r.of);
+  }
+  return [...map.values()]
+    .map(g => ({ ...g, minutos: g.segundos / 60, mediaSeg: g.paradas ? g.segundos / g.paradas : 0 }))
+    .sort((a, b) => b.segundos - a.segundos);
+}
+
+// Añade el % acumulado a una lista ya ordenada de mayor a menor, y marca los
+// elementos que caen dentro del umbral (80% por defecto): son los "pocos
+// vitales" sobre los que merece la pena actuar.
+function withCumulative(items, cutoff = 80) {
+  const total = items.reduce((s, x) => s + x.segundos, 0);
+  if (!total) return items.map(x => ({ ...x, pct: 0, acumPct: 0, vital: false }));
+  let acc = 0;
+  let cutReached = false;
+  return items.map(x => {
+    acc += x.segundos;
+    const acumPct = 100 * acc / total;
+    // El primero que cruza el umbral entra todavía (es el que lo completa);
+    // a partir de ahí, los demás ya son la "cola trivial".
+    const vital = !cutReached;
+    if (acumPct >= cutoff) cutReached = true;
+    return { ...x, pct: 100 * x.segundos / total, acumPct, vital };
+  });
+}
+
+// Pareto de verdad: barras de mayor a menor + curva de % acumulado y línea de
+// referencia al 80%. Las barras que entran en ese 80% van en color fuerte y el
+// resto apagadas, para que se vea de un golpe dónde está el problema.
+function renderParetoChart(containerId, title, sub, items, opts = {}) {
+  const container = document.getElementById(containerId);
+  if (!items.length) { container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p><p class="empty-note">Sin datos para la selección.</p>`; return; }
+  const cutoff = opts.cutoff || 80;
+  const top = items.slice(0, opts.limit || 12);
+  // padL generoso a propósito: las etiquetas van giradas -38° hacia abajo-izquierda
+  // y la del primer motivo se saldría del lienzo con el margen justo del eje.
+  const w = 680, h = 330, padL = 100, padR = 44, padT = 12, padB = 96;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const n = top.length;
+  const gap = 5;
+  const barW = Math.max(4, (plotW - gap * (n - 1)) / n);
+  const maxVal = Math.max(...top.map(d => d.minutos), 0.0001) * 1.1;
+  const yBar = v => padT + (1 - v / maxVal) * plotH;
+  const yPct = p => padT + (1 - p / 100) * plotH;
+  const cVital = opts.color || cssVar("--s2");
+  const cTrivial = cssVar("--baseline");
+  const cLine = cssVar("--s1");
+
+  let grid = "";
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const y = padT + (i / ticks) * plotH;
+    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w - padR}" y2="${y.toFixed(1)}" stroke="${cssVar("--grid")}" stroke-width="1"></line>`;
+    grid += `<text x="${padL - 7}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" class="axis-text">${fmtInt(maxVal * (1 - i / ticks))}</text>`;
+    grid += `<text x="${w - padR + 7}" y="${(y + 3.5).toFixed(1)}" text-anchor="start" class="axis-text">${100 - i * (100 / ticks)}%</text>`;
+  }
+  grid += `<line x1="${padL}" y1="${padT + plotH}" x2="${w - padR}" y2="${padT + plotH}" stroke="${cssVar("--baseline")}" stroke-width="1"></line>`;
+  // Referencia del 80%
+  const y80 = yPct(cutoff);
+  grid += `<line x1="${padL}" y1="${y80.toFixed(1)}" x2="${w - padR}" y2="${y80.toFixed(1)}" stroke="${cssVar("--text-muted")}" stroke-width="1" stroke-dasharray="4 3"></line>`;
+  grid += `<text x="${padL + 4}" y="${(y80 - 5).toFixed(1)}" class="axis-text">${cutoff}%</text>`;
+
+  let bars = "", pts = [];
+  top.forEach((d, i) => {
+    const x = padL + i * (barW + gap);
+    const y = yBar(d.minutos);
+    const bh = Math.max(1, padT + plotH - y);
+    bars += `<rect data-i="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${d.vital ? cVital : cTrivial}" style="cursor:pointer;"></rect>`;
+    pts.push([x + barW / 2, yPct(d.acumPct)]);
+    // Etiquetas giradas: los motivos de Mapex son largos ("AJUSTE DISPENSADOR
+    // BANDEJAS") y en horizontal se solaparían sin remedio.
+    const lx = x + barW / 2, ly = padT + plotH + 8;
+    bars += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" transform="rotate(-38 ${lx.toFixed(1)} ${ly.toFixed(1)})" text-anchor="end" class="axis-text">${escapeHtml(truncate(d.label, 22))}</text>`;
+  });
+
+  const linePath = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const dots = pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.6" fill="${cLine}"></circle>`).join("");
+
+  container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">
+      ${grid}${bars}
+      <path d="${linePath}" fill="none" stroke="${cLine}" stroke-width="1.8" stroke-linejoin="round"></path>${dots}
+    </svg>
+    <div class="legend">
+      <span class="item"><span class="dot" style="background:${cVital}"></span>Dentro del ${cutoff}% acumulado</span>
+      <span class="item"><span class="dot" style="background:${cTrivial}"></span>Resto</span>
+      <span class="item"><span class="dot" style="background:${cLine}"></span>% acumulado</span>
+    </div>`;
+
+  container.querySelectorAll("rect").forEach(rect => {
+    const d = top[+rect.dataset.i];
+    rect.addEventListener("mousemove", evt => showTooltip(
+      `<strong>${escapeHtml(d.label)}</strong><br>${fmtDur(d.segundos)} · ${fmtInt(d.paradas)} paradas` +
+      `<br>${fmtPct(d.pct, 1)} del total · ${fmtPct(d.acumPct, 1)} acumulado` +
+      `<br>Media ${fmtInt(d.mediaSeg / 60)} min por parada`, evt));
+    rect.addEventListener("mouseleave", hideTooltip);
+  });
+}
+
+// Cruce con ProductReport por nº de OF. Comprobado contra los CSV reales: de
+// 2.059 paradas, las que encuentran su OF casan al 100% en línea y en artículo,
+// así que el OF es una clave fiable (la fecha no: una OF que se alarga al día
+// siguiente aparece con "Fecha de Carga OF" del día anterior).
+function buildPrOfIndex(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    if (!r.of) continue;
+    let g = map.get(r.of);
+    if (!g) { g = { of: r.of, linea: r.linea, area: r.area, producto: r.producto, desc: r.desc, kg: 0, periodo: r.periodo }; map.set(r.of, g); }
+    g.kg += r.kg || 0;
+    if (r.periodo < g.periodo) g.periodo = r.periodo;
+  }
+  return map;
+}
+
+function aggregateParosPorOf(paroRows, prRows) {
+  const prIndex = buildPrOfIndex(prRows);
+  const map = new Map();
+  for (const r of paroRows) {
+    if (!r.of) continue;
+    let g = map.get(r.of);
+    if (!g) {
+      const pr = prIndex.get(r.of);
+      g = {
+        of: r.of, linea: r.linea, periodo: r.periodo,
+        producto: pr ? pr.producto : r.producto,
+        desc: pr ? pr.desc : r.desc,
+        kg: pr ? pr.kg : null,      // null = esta OF no está en ProductReport
+        segundos: 0, paradas: 0, motivos: new Map()
+      };
+      map.set(r.of, g);
+    }
+    g.segundos += r.segundos;
+    g.paradas++;
+    g.motivos.set(r.motivo, (g.motivos.get(r.motivo) || 0) + r.segundos);
+  }
+  return [...map.values()].map(g => {
+    const top = [...g.motivos.entries()].sort((a, b) => b[1] - a[1])[0];
+    return { ...g, motivoTop: top ? top[0] : "", motivoTopSeg: top ? top[1] : 0, minutos: g.segundos / 60 };
+  }).sort((a, b) => b.segundos - a.segundos);
+}
+
+function renderParoKpis(paroRows) {
+  const el = document.getElementById("paroKpiRow");
+  if (!paroRows.length) { el.innerHTML = ""; return; }
+  const totalSeg = sum(paroRows, r => r.segundos);
+  const paradas = paroRows.length;
+  const avSeg = sum(paroRows.filter(r => r.esAveria), r => r.segundos);
+  const avPct = totalSeg ? 100 * avSeg / totalSeg : 0;
+  const porMotivo = withCumulative(aggregateParos(paroRows, r => r.motivo));
+  const top = porMotivo[0];
+  const vitales = porMotivo.filter(m => m.vital).length;
+  const mediaMin = paradas ? (totalSeg / paradas) / 60 : 0;
+
+  el.innerHTML = `
+    <div class="card stat-tile lead">
+      <div class="label">Tiempo total parado</div>
+      <div class="value">${fmtDur(totalSeg)}</div>
+      <div class="sub">${fmtInt(paradas)} paradas · media ${fmtInt(mediaMin)} min</div>
+    </div>
+    <div class="card stat-tile ${avPct >= 30 ? "bad" : avPct >= 15 ? "warn" : "ok"}">
+      <div class="label">Averías</div>
+      <div class="value ${avPct >= 30 ? "bad" : avPct >= 15 ? "warn" : "ok"}">${fmtPct(avPct, 1)}</div>
+      <div class="sub">${fmtDur(avSeg)} de fallo de equipo</div>
+    </div>
+    <div class="card stat-tile muted">
+      <div class="label">Motivo principal</div>
+      <div class="value" style="font-size:14px;line-height:1.25;">${escapeHtml(top ? top.key : "—")}</div>
+      <div class="sub">${top ? fmtDur(top.segundos) + " · " + fmtPct(top.pct, 1) + " del total" : ""}</div>
+    </div>
+    <div class="card stat-tile lead">
+      <div class="label">Pocos vitales</div>
+      <div class="value">${vitales}</div>
+      <div class="sub">de ${porMotivo.length} motivos concentran el 80%</div>
+    </div>
+    <div class="card stat-tile muted">
+      <div class="label">Líneas afectadas</div>
+      <div class="value">${new Set(paroRows.map(r => r.linea)).size}</div>
+      <div class="sub">${new Set(paroRows.map(r => r.of).filter(Boolean)).size} OF con paradas</div>
+    </div>`;
+}
+
+function renderTableParoOf(data) {
+  const el = document.getElementById("tableParoOf");
+  setCount("countParoOf", data.length ? `${fmtInt(data.length)} OF` : "");
+  if (!data.length) { el.innerHTML = `<div class="empty-note">Sin paradas para la selección.</div>`; return; }
+  const top = data.slice(0, 200);
+  const rows = top.map(d => `
+    <tr class="row-clickable" data-linea="${escapeHtml(d.linea)}">
+      <td>${escapeHtml(d.of)}</td>
+      <td>${escapeHtml(d.linea)}</td>
+      <td title="${escapeHtml(d.desc)}">${escapeHtml(truncate(d.desc || d.producto, 34))}</td>
+      <td>${fmtInt(d.paradas)}</td>
+      <td>${fmtDur(d.segundos)}</td>
+      <td title="${escapeHtml(d.motivoTop)}">${escapeHtml(truncate(d.motivoTop, 24))}</td>
+      <td>${d.kg === null ? '<span class="pill neutral" title="Esta OF no aparece en el ProductReport cargado">sin OF</span>' : fmtKg(d.kg)}</td>
+    </tr>`).join("");
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>OF</th><th>Línea</th><th>Artículo</th>
+      <th>Paradas</th><th>Tiempo parado</th><th>Motivo principal</th><th>Kg producidos</th>
+    </tr></thead>
+    <tbody>${rows}</tbody></table>` +
+    (data.length > top.length ? `<div class="empty-note">Mostrando las ${top.length} OF con más tiempo parado de ${fmtInt(data.length)}.</div>` : "");
+
+  el.querySelectorAll("tr.row-clickable").forEach(tr => {
+    tr.addEventListener("click", () => focusLinea(tr.dataset.linea, "paros"));
+  });
+}
+
+function renderMotivos(paroRows, prRows) {
+  renderParoKpis(paroRows);
+
+  const porMotivo = withCumulative(aggregateParos(paroRows, r => r.motivo));
+  const totalSeg = sum(paroRows, r => r.segundos);
+  renderParetoChart("chartParetoMotivos", "Pareto de motivos de parada",
+    `${fmtDur(totalSeg)} parados en ${fmtInt(paroRows.length)} paradas · ordenado por tiempo, no por número de veces`,
+    porMotivo.map(m => ({ ...m, label: m.key })),
+    { limit: 12 }
+  );
+
+  // Por línea, separando avería de ajuste: son problemas distintos (una avería
+  // es mantenimiento, un ajuste es puesta a punto / formato).
+  const porLinea = aggregateParos(paroRows, r => r.linea);
+  const cAj = cssVar("--s2"), cAv = cssVar("--critical");
+  renderStackedBarChart("chartParosLinea", "Tiempo parado por línea",
+    "Ajustes vs. averías — pasa el ratón por cada tramo para ver el reparto",
+    porLinea.map(l => ({
+      label: l.key,
+      segments: [
+        { label: "Ajustes", value: l.segAjuste / 60, color: cAj },
+        { label: "Averías", value: l.segAveria / 60, color: cAv }
+      ]
+    })),
+    [{ label: "Ajustes", color: cAj }, { label: "Averías", color: cAv }],
+    { formatValue: v => fmtMin(v), limit: 12 }
+  );
+
+  renderTableParoOf(aggregateParosPorOf(paroRows, prRows));
 }
 
 /* ============================================================
@@ -3165,6 +3642,14 @@ function renderAll(skipFilters) {
     renderTableTramo(ctFiltered);
   }
 
+  const paroFiltered = state.paroRows.length ? getFilteredParoRows() : [];
+  if (state.paroRows.length) {
+    renderMotivos(paroFiltered, rows);
+    setCount("parosHint", `${fmtInt(paroFiltered.length)} paradas en la selección · ${fmtDur(sum(paroFiltered, r => r.segundos))} parados`);
+  } else {
+    setCount("parosHint", "");
+  }
+
   renderAlertas(rows, ctFiltered);
   renderTopbarLabels();
 
@@ -3173,6 +3658,7 @@ function renderAll(skipFilters) {
   const diaLabel = { todos: "Todos", laborables: "Laborables", finde: "Fin de semana" }[state.filters.dia];
   diag.innerHTML = `<code>${state.productRows.length}</code> filas producto` +
     (state.ctRows.length ? ` · <code>${state.ctRows.length}</code> tramos` : "") +
+    (state.paroRows.length ? ` · <code>${state.paroRows.length}</code> paradas` : "") +
     ` · <code>${rows.length}</code> en la selección` +
     ` · Turno <code>${turnoLabel}</code> · Día <code>${diaLabel}</code>` +
     (state.filters.turno !== "ambos" ? ` — kg/uds/merma prorrateados por el tiempo de cada OF en ese turno; los % no se prorratean` : "");
@@ -3673,6 +4159,7 @@ renderAjustes();
 setTab("resumen");
 setHistLevel("mes");
 setDetalleSub("articulo");
+setParosSub("motivos");
 applyCtAvailability();
 </script>
 </body>

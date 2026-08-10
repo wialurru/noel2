@@ -28,7 +28,8 @@ const ids = ["dz1","file1","status1","dz2","file2","status2","dz3","file3","stat
   "tableLinea","tableArticulo","parosGrid","parosEmpty","chartParosPareto","chartDisponibilidadTurnos","diag",
   "topbar","tabbar","views","welcome","uploadSection","datosSlot","alertList","tabBadgeAlertas","alertasSub",
   "ajustesBody","periodoControls","periodoLabel","alcanceLabel","histSliderActive","histLevelTurno","app",
-  "paroKpiRow","motivosGrid","motivosEmpty","chartParetoMotivos","chartParosLinea","tableParoOf","countParoOf","parosHint"];
+  "paroKpiRow","motivosGrid","motivosEmpty","chartParetoMotivos","chartParosLinea","tableParoOf","countParoOf","parosHint",
+  "autoStatus","folderInput","btnCargarCarpeta","btnCargarCarpetaTop"];
 const elMap = {};
 ids.forEach(id => elMap[id] = stubEl());
 
@@ -44,7 +45,9 @@ const sandbox = {
   console, document: documentStub, window: { matchMedia: () => ({ matches: false }) },
   TextDecoder, Uint8Array, Date, Math, Map, Set, JSON, parseFloat, Number, isNaN, Object,
   getComputedStyle: () => ({ getPropertyValue: () => "#000000" }),
-  location: { reload() {} },
+  // protocol "file:" hace que autoLoad() salga por la rama documentada en vez
+  // de intentar un fetch() que en Node no existe.
+  location: { protocol: "file:", reload() {} },
   // Sin esto loadSettings/loadPersonal escupen un ReferenceError en cada arranque
   // y ensucian la salida del test con ruido que no es un fallo real.
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} }
@@ -253,6 +256,29 @@ try {
   check("renderMotivos no lanza excepción", false, err.message);
   console.error(err);
 }
+
+/* ============================================================
+   Clasificación automática de CSV por cabecera
+   ============================================================ */
+
+console.log("\n=== detectCsvKind (para la carga automática por carpeta) ===");
+function cabeceraDe(ruta) {
+  const t = sandbox.decodeBuffer(new Uint8Array(fs.readFileSync(ruta)));
+  return sandbox.rowsToObjects(sandbox.parseCsv(t, sandbox.sniffDelimiter(t.slice(0, t.indexOf("\n")))));
+}
+const esperado = {
+  "ProductReport.csv": "pr",
+  "His_CT_Group.csv": "ct",
+  "His_Paro_Groups.csv": "paro"
+};
+for (const [archivo, tipo] of Object.entries(esperado)) {
+  const kind = sandbox.detectCsvKind(cabeceraDe(__dirname + "/testdata/" + archivo).index);
+  check(`${archivo} se reconoce como ${tipo}`, kind === tipo, "detectado: " + kind);
+}
+// Un CSV que no sea de Mapex no debe colarse como ninguno de los tres.
+const falso = sandbox.rowsToObjects([["Fecha", "Importe", "Cliente"], ["01/01/2026", "10", "X"]]);
+check("un CSV ajeno se rechaza en vez de asignarse a un tipo", sandbox.detectCsvKind(falso.index) === null,
+  "detectado: " + sandbox.detectCsvKind(falso.index));
 
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);
 process.exit(fallos === 0 ? 0 : 1);

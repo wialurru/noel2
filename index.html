@@ -232,6 +232,14 @@
   .dropzone input { display: none; }
   .badge-optional { display:inline-block; font-size: 10.5px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-left: 6px; }
 
+  /* Carga automática / por carpeta */
+  .auto-row { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; max-width: 700px; }
+  .auto-btn { font-size: 13.5px; padding: 9px 18px; font-weight: 600; }
+  .auto-status { font-size: 12px; color: var(--text-muted); text-align: center; line-height: 1.5; min-height: 1em; }
+  .auto-status.ok { color: var(--good-text); }
+  .auto-status.err { color: var(--critical); }
+  .pop-panel .auto-row { display: none; }
+
   /* ---------- Filters ---------- */
   #filters { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
   .filters-top-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
@@ -510,6 +518,7 @@
       <button class="icon-btn" id="btnDatos" title="Cargar más archivos CSV de Mapex" aria-haspopup="true" aria-expanded="false">📂</button>
       <div class="pop-panel right" id="popDatos" hidden>
         <h4>Datos cargados</h4>
+        <button class="ghost" id="btnCargarCarpetaTop" style="width:100%;margin-bottom:12px;" title="Vuelve a leer una carpeta entera de CSV, incluidas sus subcarpetas. Se acumulan sin duplicar.">📁 Cargar carpeta con los CSV</button>
         <div id="datosSlot"></div>
         <button class="ghost" id="btnReset" style="width:100%;margin-top:12px;" title="Los archivos nuevos se acumulan a los ya cargados. Usa esto solo si quieres vaciarlo todo y empezar de cero.">✕ Borrar todo y empezar de nuevo</button>
       </div>
@@ -540,6 +549,11 @@
   <div id="welcome">
     <h1 class="welcome-title">KPIs Producción · Mapex</h1>
     <p class="welcome-sub">Merma, sobrepeso, producción, paros y disponibilidad de todas las plantas y líneas. Todo se procesa en tu navegador — ningún archivo sale de este equipo.</p>
+    <div class="auto-row">
+      <button class="ghost auto-btn" id="btnCargarCarpeta">📁 Cargar carpeta con los CSV</button>
+      <div class="auto-status" id="autoStatus"></div>
+    </div>
+    <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
     <section id="uploadSection">
       <label class="dropzone" id="dz1">
         <input type="file" id="file1" accept=".csv" multiple>
@@ -1457,16 +1471,130 @@ document.getElementById("btnAjustesAlt").addEventListener("click", e => {
   togglePopover("btnAjustes", "popAjustes");
 });
 
-function setupDropzone(dzId, fileInputId, statusId, onFile) {
+// Cada export de Mapex se reconoce por una columna que los otros dos no tienen.
+// Clasificar por la CABECERA y no por el nombre del archivo o de la carpeta
+// evita dos problemas: que soltar un CSV en la zona equivocada lo rompa, y que
+// renombrar los archivos ("ProductReport_s31 (2).csv") deje de funcionar.
+function detectCsvKind(index) {
+  const has = name => index[normalizeHeader(name)] !== undefined;
+  if (has(PR_COLS.kg) && has(PR_COLS.linea)) return "pr";       // Peso encajadas (Kg)
+  if (has(CT_COLS.centro)) return "ct";                          // CentroTrabajo
+  if (has(PARO_COLS.linea) && has(PARO_COLS.motivo)) return "paro"; // Grupo Trabajo + Paro
+  return null;
+}
+
+const KIND_LABEL = { pr: "ProductReport", ct: "His_CT_Group", paro: "His_Paro_Groups" };
+
+// Mete un CSV ya parseado en el estado, sea cual sea su tipo. No repinta: de eso
+// se encarga refreshAfterLoad() una sola vez al final, para que cargar 30
+// archivos de golpe no dispare 30 renders completos.
+function ingestCsv(header, index, dataRows, name) {
+  const kind = detectCsvKind(index);
+  if (!kind) return { kind: null, name };
+  if (kind === "pr") {
+    const { rows, skipped } = mapProductRows(header, index, dataRows);
+    const { added, dup } = mergeProductRows(rows);
+    state.fileLog.pr.push({ name, added, dup, skipped });
+    initFiltersFromData(rows);
+    return { kind, name, added, dup, skipped };
+  }
+  const { rows, skipped } = kind === "ct"
+    ? { rows: mapCtRows(header, index, dataRows), skipped: 0 }
+    : mapParoRows(header, index, dataRows);
+  const { added, dup } = kind === "ct" ? mergeCtRows(rows) : mergeParoRows(rows);
+  state.fileLog[kind === "ct" ? "ct" : "paro"].push({ name, added, dup, skipped });
+  // Si estos archivos traen una línea/área que ProductReport no mencionó, hay
+  // que ampliar los filtros o quedarían descartadas en silencio para siempre.
+  for (const a of new Set(rows.map(r => r.area))) state.filters.areas.add(a);
+  for (const l of new Set(rows.map(r => r.linea))) state.filters.lineas.add(l);
+  return { kind, name, added, dup, skipped };
+}
+
+function refreshAfterLoad() {
+  if (state.productRows.length) enterDashboard();
+  applyCtAvailability();
+  renderFilters();
+  renderAll();
+  if (state.fileLog.pr.length) updateStatusPR();
+  if (state.fileLog.ct.length) updateStatusCT();
+  if (state.fileLog.paro.length) updateStatusParo();
+  // Los otros dos archivos solo añaden detalle sobre la producción: sin
+  // ProductReport no hay ni fechas ni líneas que enseñar, y quedarse en la
+  // pantalla de bienvenida sin explicar por qué parece que no ha hecho nada.
+  if (!state.productRows.length && (state.ctRows.length || state.paroRows.length)) {
+    setAutoStatus("Falta el ProductReport, que es el obligatorio: los otros archivos solo añaden detalle sobre él. Cárgalo y aparecerá todo.", "err");
+  }
+}
+
+// ProductReport primero: es el que crea el rango de fechas y el árbol de
+// Planta/Área/Línea sobre el que se apoyan los otros dos.
+const KIND_ORDER = { pr: 0, ct: 1, paro: 2 };
+
+async function ingestFiles(files, onProgress) {
+  const csvs = files.filter(f => /\.csv$/i.test(f.name));
+  const parsed = [];
+  for (let i = 0; i < csvs.length; i++) {
+    const file = csvs[i];
+    if (onProgress) onProgress(`Leyendo ${i + 1} de ${csvs.length}: ${file.name}…`);
+    try {
+      const { header, index, dataRows } = rowsToObjects(await readFileAsRows(file));
+      parsed.push({ name: file.name, header, index, dataRows, kind: detectCsvKind(index) });
+    } catch (err) {
+      parsed.push({ name: file.name, error: err.message });
+    }
+  }
+  parsed.sort((a, b) => (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9));
+  const cargados = { pr: 0, ct: 0, paro: 0 }, ignorados = [];
+  for (const p of parsed) {
+    if (p.error || !p.kind) { ignorados.push(p.name); continue; }
+    ingestCsv(p.header, p.index, p.dataRows, p.name);
+    cargados[p.kind]++;
+  }
+  refreshAfterLoad();
+  return { cargados, ignorados, total: csvs.length, noCsv: files.length - csvs.length };
+}
+
+// Soltar una CARPETA entera (o varias) en vez de archivos sueltos: el navegador
+// solo la expone a través de la API de entries, no de dataTransfer.files.
+async function filesFromDataTransfer(dt) {
+  const entries = [...dt.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return [...dt.files];
+  const out = [];
+  async function walk(entry) {
+    if (entry.isFile) {
+      out.push(await new Promise((res, rej) => entry.file(res, rej)));
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      // readEntries devuelve como mucho 100 entradas por llamada: hay que
+      // seguir pidiendo hasta que conteste con un lote vacío.
+      for (;;) {
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const e of batch) await walk(e);
+      }
+    }
+  }
+  for (const e of entries) await walk(e);
+  return out;
+}
+
+function resumenCarga(r) {
+  const partes = Object.entries(r.cargados).filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${KIND_LABEL[k]}`);
+  if (!partes.length) return { ok: false, texto: "No se reconoció ningún CSV de Mapex" + (r.ignorados.length ? ` (${r.ignorados.length} archivo(s) ignorado(s))` : "") };
+  return { ok: true, texto: `✓ Cargados: ${partes.join(" · ")}` + (r.ignorados.length ? ` · ${r.ignorados.length} no reconocido(s)` : "") };
+}
+
+function setupDropzone(dzId, fileInputId, statusId, kind) {
   const dz = document.getElementById(dzId);
   const input = document.getElementById(fileInputId);
   const status = document.getElementById(statusId);
   dz.addEventListener("click", () => input.click());
   dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });
   dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
-  dz.addEventListener("drop", e => {
+  dz.addEventListener("drop", async e => {
     e.preventDefault(); dz.classList.remove("drag");
-    if (e.dataTransfer.files.length) handleFiles([...e.dataTransfer.files]);
+    handleFiles(await filesFromDataTransfer(e.dataTransfer));
   });
   input.addEventListener("change", () => {
     if (input.files.length) handleFiles([...input.files]);
@@ -1474,18 +1602,24 @@ function setupDropzone(dzId, fileInputId, statusId, onFile) {
   });
 
   async function handleFiles(files) {
-    for (const file of files) {
-      status.className = "status";
-      status.textContent = "Leyendo " + file.name + "…";
-      try {
-        const rows = await readFileAsRows(file);
-        const { header, index, dataRows } = rowsToObjects(rows);
-        onFile(header, index, dataRows, file.name);
-      } catch (err) {
-        status.className = "status err";
-        status.textContent = "Error leyendo " + file.name + ": " + err.message;
-        console.error(err);
+    if (!files.length) return;
+    status.className = "status";
+    try {
+      const r = await ingestFiles(files, msg => { status.textContent = msg; });
+      const res = resumenCarga(r);
+      if (!res.ok) { status.className = "status err"; status.textContent = res.texto; return; }
+      // Si lo que se soltó aquí era de otro tipo, esta zona no tiene recuento
+      // propio que enseñar (lo pone updateStatus* en la que le toque): en vez de
+      // dejar colgado el "Leyendo…", se dice dónde ha acabado el archivo.
+      if (!r.cargados[kind]) {
+        const otros = Object.entries(r.cargados).filter(([, n]) => n > 0).map(([k]) => KIND_LABEL[k]);
+        status.className = "status ok";
+        status.textContent = `✓ Reconocido por su cabecera como ${otros.join(" y ")} — cargado en su sitio`;
       }
+    } catch (err) {
+      status.className = "status err";
+      status.textContent = "Error leyendo los archivos: " + err.message;
+      console.error(err);
     }
   }
 }
@@ -1534,48 +1668,138 @@ function enterDashboard() {
   document.getElementById("views").hidden = false;
 }
 
-setupDropzone("dz1", "file1", "status1", (header, index, dataRows, name) => {
-  const { rows, skipped } = mapProductRows(header, index, dataRows);
-  const { added, dup } = mergeProductRows(rows);
-  state.fileLog.pr.push({ name, added, dup, skipped });
-  initFiltersFromData(rows);
-  enterDashboard();
-  renderFilters();
-  renderAll();
-  updateStatusPR();
-});
+// Las tres zonas son equivalentes: cada archivo va a su sitio por su cabecera,
+// así que soltar cualquier CSV en cualquiera de ellas funciona igual.
+setupDropzone("dz1", "file1", "status1", "pr");
+setupDropzone("dz2", "file2", "status2", "ct");
+setupDropzone("dz3", "file3", "status3", "paro");
 
-setupDropzone("dz2", "file2", "status2", (header, index, dataRows, name) => {
-  const rows = mapCtRows(header, index, dataRows);
-  const { added, dup } = mergeCtRows(rows);
-  state.fileLog.ct.push({ name, added, dup });
-  // BUG: si His_CT_Group trae una línea/área que ProductReport nunca mencionó
-  // (código de línea distinto o retirado en años anteriores, cobertura parcial…),
-  // el filtro por línea ("lineas.has(r.linea)" en getFilteredCtRowsBase/getScopedCtRows)
-  // la descarta silenciosamente para siempre — nunca aparece en ningún panel de
-  // turnos/paros, sin aviso. Igual que hace initFiltersFromData con ProductReport,
-  // hay que ampliar los Sets de filtro con lo que traiga también este archivo.
-  for (const a of new Set(rows.map(r => r.area))) state.filters.areas.add(a);
-  for (const l of new Set(rows.map(r => r.linea))) state.filters.lineas.add(l);
-  applyCtAvailability();
-  renderFilters();
-  renderAll();
-  updateStatusCT();
-});
+/* ---------- Carga automática de los CSV que haya junto al HTML ----------
+   Dos caminos, según cómo se abra la página:
 
-setupDropzone("dz3", "file3", "status3", (header, index, dataRows, name) => {
-  const { rows, skipped } = mapParoRows(header, index, dataRows);
-  const { added, dup } = mergeParoRows(rows);
-  state.fileLog.paro.push({ name, added, dup, skipped });
-  // Mismo motivo que en His_CT_Group: si este archivo trae una línea/área que
-  // ProductReport no mencionó, sin esto el filtro la descartaría en silencio y
-  // sus paradas no aparecerían en ningún Pareto.
-  for (const a of new Set(rows.map(r => r.area))) state.filters.areas.add(a);
-  for (const l of new Set(rows.map(r => r.linea))) state.filters.lineas.add(l);
-  applyCtAvailability();
-  renderFilters();
-  renderAll();
-  updateStatusParo();
+   · Servida por http:// — se leen las carpetas y se cargan todos los CSV solos,
+     sin tocar nada. Es el único modo en que el navegador deja leer del disco.
+   · Abierta con doble clic (file://) — fetch() está prohibido por seguridad
+     (el navegador no deja que una página local lea archivos del equipo), así
+     que no hay forma de hacerlo sin intervención: se ofrece el botón "Cargar
+     carpeta", que en UN clic lee las tres carpetas enteras.               */
+
+async function fetchCsvRows(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const text = decodeBuffer(new Uint8Array(await res.arrayBuffer()));
+  const nl = text.indexOf("\n");
+  return parseCsv(text, sniffDelimiter(text.slice(0, nl > 0 ? nl : 500)));
+}
+
+// La raíz NO se puede listar: al pedirla, el servidor entrega este mismo
+// index.html en vez del índice de la carpeta. Así que para el primer nivel hay
+// que probar nombres, y a partir de ahí ya se descubren las subcarpetas del
+// listado. Un datos.json, si existe, evita todo esto y manda.
+const AUTO_DIRS = ["ProductReport/", "His_Paro_Group/", "His_Paro_Groups/",
+  "His_CT_Group/", "His_CT_Groups/", "datos/", "csv/"];
+const AUTO_MAX_DEPTH = 2;
+
+function parseIndexLinks(html) {
+  const csvs = [], dirs = [];
+  // Si lo que ha contestado el servidor es la propia aplicación (porque la
+  // carpeta tiene index.html), no es un listado: parsearlo sacaría "enlaces"
+  // del propio código fuente.
+  if (html.includes('id="uploadSection"')) return { csvs, dirs };
+  for (const m of html.matchAll(/href="([^"?#]+)"/gi)) {
+    const href = decodeURIComponent(m[1]);
+    if (/^[a-z]+:\/\//i.test(href) || href.startsWith("..") || href.startsWith("/")) continue;
+    if (href.endsWith("/")) dirs.push(href.replace(/^.*?([^/]+\/)$/, "$1"));
+    else if (/\.csv$/i.test(href)) csvs.push(href.replace(/^.*\//, ""));
+  }
+  return { csvs, dirs };
+}
+
+async function discoverCsvUrls() {
+  // 1) Manifiesto explícito: la vía fiable en cualquier servidor.
+  try {
+    const res = await fetch("datos.json", { cache: "no-store" });
+    if (res.ok) {
+      const j = await res.json();
+      const lista = (Array.isArray(j) ? j : j.archivos || []).filter(u => /\.csv$/i.test(u));
+      if (lista.length) return lista;
+    }
+  } catch (err) { /* sin manifiesto: se sigue por el listado del servidor */ }
+
+  // 2) Listado de directorios, empezando por los nombres habituales.
+  const urls = new Set(), vistos = new Set();
+  async function explorar(dir, depth) {
+    if (depth > AUTO_MAX_DEPTH || vistos.has(dir)) return;
+    vistos.add(dir);
+    let html;
+    try {
+      const res = await fetch(dir, { cache: "no-store" });
+      if (!res.ok) return;
+      html = await res.text();
+    } catch (err) { return; }
+    const { csvs, dirs } = parseIndexLinks(html);
+    for (const c of csvs) urls.add(dir + c);
+    for (const d of dirs) await explorar(dir + d, depth + 1);
+  }
+  for (const dir of AUTO_DIRS) await explorar(dir, 1);
+  return [...urls];
+}
+
+function setAutoStatus(texto, clase) {
+  const el = document.getElementById("autoStatus");
+  el.className = "auto-status" + (clase ? " " + clase : "");
+  el.textContent = texto || "";
+}
+
+async function autoLoad() {
+  if (location.protocol === "file:") {
+    setAutoStatus("Abierto como archivo local: el navegador no permite leer las carpetas solo. Pulsa «Cargar carpeta» y elige la carpeta que contiene los CSV — se leen las tres subcarpetas de una vez.");
+    return;
+  }
+  setAutoStatus("Buscando CSV en las carpetas…");
+  let urls;
+  try { urls = await discoverCsvUrls(); } catch (err) { urls = []; }
+  if (!urls.length) {
+    setAutoStatus("No se encontraron CSV junto a la página. Cárgalos a mano o pulsa «Cargar carpeta».");
+    return;
+  }
+  const cargados = { pr: 0, ct: 0, paro: 0 }, ignorados = [];
+  const orden = [];
+  for (const url of urls) {
+    try {
+      const { header, index, dataRows } = rowsToObjects(await fetchCsvRows(url));
+      const kind = detectCsvKind(index);
+      if (!kind) { ignorados.push(url); continue; }
+      orden.push({ url, header, index, dataRows, kind });
+    } catch (err) { ignorados.push(url); }
+    setAutoStatus(`Leyendo ${orden.length + ignorados.length} de ${urls.length}…`);
+  }
+  orden.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
+  for (const o of orden) { ingestCsv(o.header, o.index, o.dataRows, o.url); cargados[o.kind]++; }
+  refreshAfterLoad();
+  const res = resumenCarga({ cargados, ignorados });
+  setAutoStatus(res.texto + " automáticamente", res.ok ? "ok" : "err");
+}
+
+// Selector de carpeta (webkitdirectory): un clic y lee todo el árbol, incluidas
+// las subcarpetas. Es lo más cerca del "automático" a lo que se puede llegar
+// con la página abierta como archivo local.
+const folderInput = document.getElementById("folderInput");
+document.getElementById("btnCargarCarpeta").addEventListener("click", () => folderInput.click());
+document.getElementById("btnCargarCarpetaTop").addEventListener("click", () => folderInput.click());
+folderInput.addEventListener("change", async () => {
+  const files = [...folderInput.files];
+  folderInput.value = "";
+  if (!files.length) return;
+  setAutoStatus("Leyendo la carpeta…");
+  try {
+    const r = await ingestFiles(files, msg => setAutoStatus(msg));
+    const res = resumenCarga(r);
+    setAutoStatus(res.texto + ` · ${r.total} CSV encontrados en la carpeta`, res.ok ? "ok" : "err");
+  } catch (err) {
+    setAutoStatus("Error leyendo la carpeta: " + err.message, "err");
+    console.error(err);
+  }
 });
 
 // Los dos archivos de paros son opcionales e independientes: His_CT_Group da
@@ -1640,7 +1864,13 @@ function initFiltersFromData(newRows) {
   // Cargas siguientes (acumulando meses): amplía Área/Línea con lo nuevo sin
   // deseleccionar lo que ya tenías elegido, y NO toca Desde/Hasta — así no te
   // cambia la vista que estabas mirando cada vez que añades un mes más.
-  const isFirstLoad = state.filters.areas.size === 0 && state.filters.lineas.size === 0;
+  // BUG: esto miraba si areas/lineas estaban vacías para decidir si era la
+  // primera carga, pero His_CT_Group y His_Paro_Groups también las rellenan.
+  // Cargando uno de esos ANTES que ProductReport, la condición ya era falsa y
+  // Desde/Hasta se quedaban a null para siempre: renderFilters petaba en
+  // toISOString() y el dashboard no llegaba a abrirse nunca. La pregunta real
+  // es si ya hay ventana de fechas, que es justo lo que se va a fijar aquí.
+  const isFirstLoad = !state.filters.desde || !state.filters.hasta;
   const scope = newRows && newRows.length ? newRows : state.productRows;
   for (const a of new Set(scope.map(r => r.area))) state.filters.areas.add(a);
   for (const l of new Set(scope.map(r => r.linea))) state.filters.lineas.add(l);
@@ -1664,6 +1894,10 @@ function getWeekOptions() {
 }
 
 function renderFilters() {
+  // Sin ProductReport no hay ventana de fechas que pintar (los controles de
+  // periodo la dan por hecha). Puede pasar al cargar His_CT_Group o
+  // His_Paro_Groups sueltos: se sale sin más y se pinta cuando llegue.
+  if (!state.filters.desde || !state.filters.hasta) return;
   const el = document.getElementById("filters");
   // El acordeón se construye con la UNIÓN de ambos archivos, no solo con
   // ProductReport. His_CT_Group puede traer líneas/áreas que ProductReport no
@@ -4161,6 +4395,7 @@ setHistLevel("mes");
 setDetalleSub("articulo");
 setParosSub("motivos");
 applyCtAvailability();
+autoLoad();
 </script>
 </body>
 </html>

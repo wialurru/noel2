@@ -1,0 +1,3679 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KPIs Producción · Mapex</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --serious:        #ec835a;
+    --critical:       #d03b3b;
+    --good-text:      #006300;
+    --seq-blue:       #256abf;
+    --seq-blue-light: #9ec5f4;
+    --s1: #2a78d6; /* blue */
+    --s2: #eb6834; /* orange */
+    --s3: #1baf7a; /* aqua */
+    --s4: #eda100; /* yellow */
+    --s5: #e87ba4; /* magenta */
+    --s6: #008300; /* green */
+    --s7: #4a3aa7; /* violet */
+    --s8: #e34948; /* red */
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --serious:        #ec835a;
+    --critical:       #e66767;
+    --good-text:      #0ca30c;
+    --seq-blue:       #3987e5;
+    --seq-blue-light: #184f95;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --s4: #c98500;
+    --s5: #d55181;
+    --s6: #008300;
+    --s7: #9085e9;
+    --s8: #e66767;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --good-text:      #0ca30c;
+      --seq-blue:       #3987e5;
+      --seq-blue-light: #184f95;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+      --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  /* Varios contenedores del shell son display:flex/grid, que gana al valor por
+     defecto de [hidden]; sin esto, ocultarlos por atributo no surtiría efecto. */
+  [hidden] { display: none !important; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    /* La app ocupa exactamente el viewport: la página nunca hace scroll.
+       Lo que no cabe se navega por pestañas, o hace scroll DENTRO de su
+       propio panel (tablas y listas), nunca arrastrando toda la pantalla. */
+    overflow: hidden;
+  }
+  .app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  button.ghost {
+    background: transparent; border: 1px solid var(--border); color: var(--text-primary);
+    padding: 7px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  }
+  button.ghost:hover { background: var(--surface-1); }
+  button.ghost:focus-visible, .seg button:focus-visible, .tabbar button:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  /* ---------- Shell: barra fija + pestañas + vistas ---------- */
+  .topbar {
+    flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; background: var(--surface-1); border-bottom: 1px solid var(--border);
+  }
+  .topbar .brand { font-size: 14px; font-weight: 650; white-space: nowrap; letter-spacing: -.01em; }
+  .topbar .spacer { flex: 1; }
+  .topbar .sep { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+  .icon-btn {
+    background: transparent; border: 1px solid transparent; color: var(--text-secondary);
+    padding: 5px 8px; border-radius: 7px; font-size: 14px; cursor: pointer; line-height: 1;
+  }
+  .icon-btn:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+
+  /* Control compacto que abre un panel (periodo, alcance, ajustes, datos) */
+  .pop-wrap { position: relative; }
+  .pop-btn {
+    display: inline-flex; align-items: center; gap: 7px; background: var(--page);
+    border: 1px solid var(--border); color: var(--text-primary); border-radius: 8px;
+    padding: 5px 10px; font-size: 12.5px; cursor: pointer; font-family: inherit; white-space: nowrap;
+  }
+  .pop-btn:hover { border-color: var(--text-muted); }
+  .pop-btn .k { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .pop-btn .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .pop-btn .caret { color: var(--text-muted); font-size: 9px; }
+  .pop-btn.on { border-color: var(--s1); box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1) 18%, transparent); }
+  .pop-panel {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; min-width: 280px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px; box-shadow: 0 12px 32px rgba(0,0,0,.16);
+  }
+  .pop-panel.right { left: auto; right: 0; }
+  .pop-panel h4 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); font-weight: 600; }
+
+  /* Segmented control — turno, día, nivel de histórico, sub-vistas */
+  .seg { display: inline-flex; background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 2px; gap: 2px; }
+  .seg button {
+    background: transparent; border: none; color: var(--text-secondary); font-family: inherit;
+    font-size: 12.5px; padding: 4px 11px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  }
+  .seg button:hover:not(.active) { color: var(--text-primary); }
+  .seg button.active { background: var(--surface-1); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .seg button:disabled { opacity: .38; cursor: not-allowed; }
+  .seg-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-right: 2px; }
+
+  .tabbar { flex-shrink: 0; display: flex; align-items: center; gap: 2px; padding: 0 16px; background: var(--surface-1); border-bottom: 1px solid var(--border); }
+  .tabbar button {
+    background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-secondary);
+    font-family: inherit; font-size: 13px; padding: 9px 13px; cursor: pointer; white-space: nowrap;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .tabbar button:hover:not(.active) { color: var(--text-primary); }
+  .tabbar button.active { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--s1); }
+  .tabbar button:disabled { opacity: .4; cursor: not-allowed; }
+  .tabbar .tab-badge {
+    background: var(--critical); color: #fff; font-size: 10px; font-weight: 700; line-height: 1;
+    padding: 2px 5px; border-radius: 999px; min-width: 16px; text-align: center;
+  }
+
+  main.views { flex: 1; min-height: 0; position: relative; }
+  .view { position: absolute; inset: 0; padding: 14px 16px; overflow: hidden; display: none; flex-direction: column; gap: 12px; }
+  .view.active { display: flex; }
+
+  /* Panel: caja con cabecera fija y cuerpo que hace scroll por dentro */
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .panel > header { flex-shrink: 0; padding: 11px 14px 9px; display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--grid); }
+  .panel > header h3 { margin: 0; font-size: 13px; font-weight: 650; }
+  .panel > header .sub { font-size: 11.5px; color: var(--text-muted); }
+  .panel > header .right { margin-left: auto; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+  .panel > .body { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; }
+  .panel > .body.flush { padding: 0; }
+  .panel > .body.chart { display: flex; align-items: center; }
+  .panel > .body.chart > svg { width: 100%; height: auto; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
+  .grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
+  .grid-2x3 { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
+  .grid-side { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 12px; flex: 1; min-height: 0; }
+  .stack { display: grid; grid-template-rows: 1fr 1fr; gap: 12px; min-height: 0; }
+  .row-controls { flex-shrink: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  /* Solo se muestra el nivel de histórico / la sub-tabla de detalle activos */
+  .hist-level, .detalle-sub { display: none; }
+  .hist-level.active { display: grid; }
+  .detalle-sub.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .detalle-sub.stack.active { display: grid; }
+  @media (max-width: 1180px) {
+    .grid-2x3 { grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr); }
+    .grid-side { grid-template-columns: 1fr; grid-template-rows: 1.4fr 1fr; }
+  }
+
+  /* ---------- Upload ----------
+     Pantalla de bienvenida mientras no hay datos; una vez cargados, este mismo
+     nodo se mueve dentro del popover "Datos" de la barra superior (cargar CSV
+     es una acción semanal, no merece espacio permanente en pantalla). */
+  #welcome { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; }
+  #welcome .welcome-title { font-size: 19px; font-weight: 650; margin: 0; }
+  #welcome .welcome-sub { font-size: 13px; color: var(--text-secondary); margin: 0; text-align: center; max-width: 620px; line-height: 1.55; }
+  #uploadSection { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; max-width: 820px; }
+  .pop-panel #uploadSection { grid-template-columns: 1fr; max-width: none; width: 460px; }
+  .pop-panel .dropzone { padding: 14px; }
+  .pop-panel .dropzone p { display: none; }
+  @media (max-width: 780px) { #uploadSection { grid-template-columns: 1fr; } }
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    text-align: center;
+    background: var(--surface-1);
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .dropzone.drag { border-color: var(--s1); background: color-mix(in srgb, var(--s1) 8%, var(--surface-1)); }
+  .dropzone h3 { margin: 6px 0 4px; font-size: 14px; }
+  .dropzone p { margin: 0; color: var(--text-secondary); font-size: 12.5px; }
+  .dropzone .status { margin-top: 10px; font-size: 12.5px; }
+  .dropzone .status.ok { color: var(--good-text); }
+  .dropzone .status.err { color: var(--critical); }
+  .dropzone input { display: none; }
+  .badge-optional { display:inline-block; font-size: 10.5px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-left: 6px; }
+
+  /* ---------- Filters ---------- */
+  #filters { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+  .filters-top-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+  .filter-group { display: flex; flex-direction: column; gap: 6px; }
+  .filter-group.full { width: 100%; }
+  .filter-group label.title { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; display: flex; align-items: center; gap: 8px; }
+  select, input[type=date] {
+    background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 9px; font-size: 13px; font-family: inherit;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips.chips-scroll { max-height: 92px; overflow-y: auto; padding: 2px 4px 2px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); }
+  .chips.chips-scroll.chips-area { max-height: none; border: none; background: transparent; padding: 0; }
+  .chip {
+    border: 1px solid var(--border); border-radius: 999px; padding: 5px 11px; font-size: 12.5px;
+    cursor: pointer; color: var(--text-secondary); background: var(--surface-1); user-select: none;
+  }
+  .chip.active { background: var(--s1); border-color: var(--s1); color: #fff; }
+  .chip small { opacity: .75; margin-left: 4px; }
+
+  .area-accordion { max-height: 340px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); }
+  .area-panel { border-bottom: 1px solid var(--grid); }
+  .area-panel:last-child { border-bottom: none; }
+  .area-panel-header { display: flex; align-items: center; gap: 8px; padding: 7px 8px; }
+  .area-toggle-btn {
+    background: none; border: none; cursor: pointer; padding: 2px 4px; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .area-toggle-btn .area-caret { display: inline-block; transition: transform .12s ease; font-size: 10px; }
+  .area-panel.expanded .area-toggle-btn .area-caret { transform: rotate(90deg); }
+  .area-count { font-size: 11px; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+  .linea-subchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 10px 10px 30px; }
+  .linea-subchips .chip { font-size: 11.5px; padding: 4px 9px; }
+
+  .planta-panel { border-bottom: 1px solid var(--border); }
+  .planta-panel:last-child { border-bottom: none; }
+  .planta-panel-header { display: flex; align-items: center; gap: 8px; padding: 8px; background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+  .planta-chip.active { background: var(--s7); border-color: var(--s7); }
+  .planta-body { padding-left: 18px; }
+  .planta-body .area-panel { border-bottom: 1px solid var(--grid); }
+  .planta-body .area-panel:last-child { border-bottom: none; }
+
+  /* ---------- KPI cards ----------
+     Jerarquía explícita: la primera tarjeta (Producción) es el volumen y manda
+     en tamaño; el resto son indicadores de salud con semáforo en el borde
+     izquierdo, para que un vistazo periférico ya diga si algo va mal. */
+  #kpiRow { flex-shrink: 0; display: grid; grid-template-columns: 1.35fr repeat(4, 1fr); gap: 10px; }
+  @media (max-width: 1180px) { #kpiRow { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 700px) { #kpiRow { grid-template-columns: repeat(2, 1fr); } }
+  .stat-tile { padding: 11px 13px; border-left: 3px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
+  .stat-tile.lead { border-left-color: var(--s1); }
+  .stat-tile.ok { border-left-color: var(--good); }
+  .stat-tile.warn { border-left-color: var(--warning); }
+  .stat-tile.bad { border-left-color: var(--critical); }
+  .stat-tile.muted { border-left-color: var(--border); }
+  .stat-tile .label { font-size: 11.5px; color: var(--text-secondary); display: flex; align-items: center; gap: 5px; }
+  .stat-tile .label .hint-dot { color: var(--text-muted); cursor: help; font-size: 10px; }
+  .stat-tile .value { font-size: 21px; font-weight: 650; line-height: 1.05; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .stat-tile.lead .value { font-size: 25px; }
+  .stat-tile .value.ok { color: var(--good-text); }
+  .stat-tile .value.bad { color: var(--critical); }
+  .stat-tile .value.warn { color: var(--serious); }
+  .stat-tile .delta { font-size: 11.5px; display: flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+  .stat-tile .delta.good { color: var(--good-text); }
+  .stat-tile .delta.bad { color: var(--critical); }
+  .stat-tile .delta.neutral { color: var(--text-muted); }
+  .stat-tile .sub { font-size: 11px; color: var(--text-muted); }
+
+  /* ---------- Panel de alertas "Atención" ---------- */
+  .alert-list { display: flex; flex-direction: column; }
+  .alert-item {
+    display: flex; align-items: flex-start; gap: 10px; padding: 9px 14px; cursor: pointer;
+    border-bottom: 1px solid var(--grid); border-left: 3px solid transparent; text-align: left;
+    background: none; font-family: inherit; color: inherit; width: 100%;
+  }
+  .alert-item:hover { background: color-mix(in srgb, var(--s1) 6%, transparent); }
+  .alert-item.sev-critical { border-left-color: var(--critical); }
+  .alert-item.sev-warning  { border-left-color: var(--warning); }
+  .alert-item .a-main { flex: 1; min-width: 0; }
+  .alert-item .a-title { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+  .alert-item .a-title .tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+    padding: 1px 6px; border-radius: 4px; flex-shrink: 0;
+  }
+  .alert-item.sev-critical .tag { background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical); }
+  .alert-item.sev-warning  .tag { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--serious); }
+  .alert-item .a-detail { font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; line-height: 1.4; }
+  .alert-item .a-metric { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .alert-item.sev-critical .a-metric { color: var(--critical); }
+  .alert-item.sev-warning  .a-metric { color: var(--serious); }
+  .alert-item .a-go { color: var(--text-muted); font-size: 12px; align-self: center; }
+  .alert-empty { padding: 26px 18px; text-align: center; color: var(--text-muted); font-size: 12.5px; line-height: 1.6; }
+  .alert-empty strong { color: var(--good-text); display: block; font-size: 14px; margin-bottom: 4px; }
+
+  /* Ajustes de umbrales */
+  .set-row { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-bottom: 1px solid var(--grid); font-size: 12.5px; }
+  .set-row:last-child { border-bottom: none; }
+  .set-row label.name { flex: 1; cursor: pointer; display: flex; align-items: center; gap: 7px; }
+  .set-row input[type=number] {
+    width: 62px; background: var(--page); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 6px; font-size: 12.5px; font-family: inherit; text-align: right;
+  }
+  .set-row .unit { color: var(--text-muted); font-size: 11.5px; width: 26px; }
+  .set-hint { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 10px 0 0; }
+
+  /* ---------- Charts ----------
+     Cada gráfico vive en una celda de altura fija: el SVG conserva su viewBox y
+     se escala para caber (preserveAspectRatio por defecto), así ninguna vista
+     necesita scroll de página. Los gráficos con muchas barras usan .tall, que
+     mantiene el alto natural y deja que scrollee solo esa caja. */
+  .col-value { font-size: 10px; fill: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .hist-slider-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--text-muted); flex: 1; min-width: 180px; }
+  .hist-slider-row:empty { display: none; }
+  .hist-slider-row input[type=range] { flex: 1; accent-color: var(--s1); }
+  .hist-slider-row .hist-slider-label { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .hist-breadcrumb { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); }
+  .hist-breadcrumb span { color: var(--text-primary); font-weight: 500; }
+  .hist-breadcrumb button.ghost { padding: 2px 9px; font-size: 11.5px; }
+  #histBreadcrumb:empty { display: none; }
+
+  .chart-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 11px 13px; }
+  .chart-card h3 { margin: 0 0 2px; font-size: 12.5px; font-weight: 650; flex-shrink: 0; }
+  .chart-card .chart-sub {
+    margin: 0 0 8px; font-size: 11px; color: var(--text-muted); flex-shrink: 0;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .chart-card svg { flex: 1; min-height: 0; width: 100%; height: 100%; overflow: visible; }
+  .chart-card .legend { flex-shrink: 0; }
+  .chart-card .empty-note { padding: 14px; }
+  .chart-card.tall { overflow-y: auto; }
+  .chart-card.tall svg { flex: none; height: auto; }
+  .bar-label { font-size: 11px; fill: var(--text-secondary); }
+  .bar-value { font-size: 11px; fill: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .axis-text { font-size: 10.5px; fill: var(--text-muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11.5px; color: var(--text-secondary); }
+  .legend .item { display: flex; align-items: center; gap: 5px; }
+  .legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .chart-tooltip {
+    position: fixed; pointer-events: none; background: var(--text-primary); color: var(--surface-1);
+    font-size: 11.5px; padding: 6px 9px; border-radius: 6px; z-index: 50; opacity: 0; transition: opacity .1s;
+    max-width: 240px; line-height: 1.4;
+  }
+
+  /* ---------- Tables ----------
+     Las tablas viven dentro de .panel > .body, que es quien hace scroll; el
+     thead queda pegado arriba (sticky) contra ese contenedor, no contra la
+     página. Así se navegan miles de filas sin mover la pantalla. */
+  .row-count { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+  .table-wrap { overflow: auto; background: var(--surface-1); }
+  .panel > .body > .table-wrap, .panel > .body.flush > .table-wrap { border: none; border-radius: 0; height: 100%; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; min-width: 720px; }
+  thead th {
+    text-align: right; padding: 8px 10px; font-weight: 600; color: var(--text-secondary);
+    border-bottom: 1px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none;
+    background: var(--surface-1); position: sticky; top: 0; z-index: 2;
+  }
+  thead th:first-child, thead th:nth-child(2), thead th:nth-child(3) { text-align: left; }
+  thead th.sorted::after { content: " " attr(data-dir); font-size: 10px; color: var(--text-muted); }
+  tbody td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  tbody td:first-child, tbody td:nth-child(2), tbody td:nth-child(3) { text-align: left; font-variant-numeric: normal; }
+  tbody tr:hover { background: color-mix(in srgb, var(--s1) 5%, transparent); }
+  tbody tr.row-clickable { cursor: pointer; }
+  tbody tr.total-row { font-weight: 600; background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+  .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+  .pill.good { color: var(--good-text); background: color-mix(in srgb, var(--good) 14%, transparent); }
+  .pill.bad { color: var(--critical); background: color-mix(in srgb, var(--critical) 14%, transparent); }
+  .pill.neutral { color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 14%, transparent); }
+  .search-box input[type=text] {
+    background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-size: 13px; width: 300px; font-family: inherit;
+  }
+  .search-box input[type=text]:focus { outline: none; border-color: var(--s1); box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1) 18%, transparent); }
+
+  .empty-note { padding: 30px 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+  #diag { flex-shrink: 0; font-size: 11px; color: var(--text-muted); padding: 0 2px; }
+  #diag code { background: color-mix(in srgb, var(--text-primary) 6%, transparent); padding: 1px 5px; border-radius: 4px; }
+
+  /* Vistas a pantalla completa que tapan el dashboard (informe y personal).
+     Estas sí hacen scroll propio: no son pantallas de consulta rápida. */
+  .overlay-view { position: fixed; inset: 0; z-index: 80; overflow: auto; background: var(--page); }
+  #personalView { padding: 18px 22px 40px; }
+  #personalView .table-wrap { border: 1px solid var(--border); border-radius: 12px; }
+
+  /* ---------- Print report (vista imprimible / Ctrl+P) ---------- */
+  /* Colores fijos en hex, no las variables de tema — el informe debe verse
+     igual en claro/oscuro y sobre todo al imprimir/guardar como PDF. */
+  .print-report { background: #ffffff; color: #111111; min-height: 100vh; padding: 24px; }
+  .print-toolbar { display: flex; gap: 8px; margin-bottom: 20px; }
+  .print-toolbar button { background: #fff; color: #111; border: 1px solid #bbb; }
+  .print-toolbar button:hover { background: #f2f2f0; }
+  .report-title { font-size: 20px; margin: 0 0 2px; }
+  .report-sub { font-size: 12.5px; color: #555; margin: 0 0 4px; }
+  .report-meta { font-size: 11px; color: #777; margin: 0 0 18px; }
+  .report-h2 {
+    font-size: 13.5px; margin: 22px 0 8px; padding-bottom: 4px;
+    border-bottom: 2px solid #111; text-transform: uppercase; letter-spacing: .03em;
+  }
+  .report-pivot { border-collapse: collapse; width: 100%; font-size: 11.5px; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+  .report-pivot th, .report-pivot td { border: 1px solid #ccc; padding: 5px 8px; text-align: right; }
+  .report-pivot th:first-child, .report-pivot td:first-child { text-align: left; font-weight: 600; background: #f5f5f4; }
+  .report-pivot thead th { background: #eceae4; font-weight: 700; }
+  .report-pivot td.total-col, .report-pivot th.total-col { background: #f0efe9; font-weight: 700; }
+  .report-detail { border-collapse: collapse; width: 100%; font-size: 10.5px; margin-bottom: 16px; font-variant-numeric: tabular-nums; }
+  .report-detail th, .report-detail td { border: 1px solid #ddd; padding: 3px 6px; text-align: right; }
+  .report-detail th:nth-child(1), .report-detail td:nth-child(1),
+  .report-detail th:nth-child(2), .report-detail td:nth-child(2),
+  .report-detail th:nth-child(3), .report-detail td:nth-child(3) { text-align: left; }
+  .report-detail thead th { background: #eceae4; }
+  .report-detail tr.linea-total { background: #f0efe9; font-weight: 700; }
+  .report-detail tr { page-break-inside: avoid; }
+  .report-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 16px 0 4px; }
+  /* El informe no vive en el layout de altura fija del dashboard: aquí los
+     gráficos recuperan su alto natural (display:block + height:auto). */
+  .report-charts .chart-card {
+    border: 1px solid #ddd; padding: 12px; border-radius: 6px; page-break-inside: avoid;
+    display: block; overflow: visible; min-height: 0;
+  }
+  .report-charts .chart-card h3 { margin: 0 0 2px; font-size: 12.5px; }
+  .report-charts .chart-card .chart-sub { margin: 0 0 8px; font-size: 10.5px; color: #777; -webkit-line-clamp: none; display: block; }
+  .report-charts .chart-card svg { flex: none; height: auto; }
+  .report-block { page-break-inside: avoid; }
+
+  @media print {
+    html, body { overflow: visible; height: auto; }
+    .no-print { display: none !important; }
+    #dashboard, .topbar, .tabbar, #welcome, #personalView { display: none !important; }
+    .print-report { padding: 0; position: static; overflow: visible; }
+    @page { size: A4 landscape; margin: 10mm; }
+  }
+</style>
+</head>
+<body>
+<div class="app viz-root" id="app">
+
+  <!-- Barra fija: alcance de la consulta (siempre visible, nunca hace scroll) -->
+  <header class="topbar" id="topbar" hidden>
+    <span class="brand">KPIs Producción</span>
+    <span class="sep"></span>
+
+    <div class="pop-wrap">
+      <button class="pop-btn" id="btnPeriodo" aria-haspopup="true" aria-expanded="false">
+        <span class="k">Periodo</span><span class="v" id="periodoLabel">—</span><span class="caret">▼</span>
+      </button>
+      <div class="pop-panel" id="popPeriodo" hidden>
+        <h4>Rango de fechas</h4>
+        <div id="periodoControls"></div>
+      </div>
+    </div>
+
+    <div class="seg" id="turnoSeg" role="group" aria-label="Turno">
+      <button data-turno="ambos">Ambos</button>
+      <button data-turno="manana">Mañana</button>
+      <button data-turno="tarde">Tarde</button>
+    </div>
+
+    <div class="seg" id="diaSeg" role="group" aria-label="Tipo de día">
+      <button data-dia="todos">Todos</button>
+      <button data-dia="laborables">Laborables</button>
+      <button data-dia="finde">Finde</button>
+    </div>
+
+    <div class="pop-wrap">
+      <button class="pop-btn" id="btnAlcance" aria-haspopup="true" aria-expanded="false">
+        <span class="k">Alcance</span><span class="v" id="alcanceLabel">—</span><span class="caret">▼</span>
+      </button>
+      <div class="pop-panel" id="popAlcance" hidden style="width:440px;">
+        <h4>Planta / Área / Línea</h4>
+        <div id="filters"></div>
+      </div>
+    </div>
+
+    <span class="spacer"></span>
+
+    <div class="pop-wrap">
+      <button class="icon-btn" id="btnDatos" title="Cargar más archivos CSV de Mapex" aria-haspopup="true" aria-expanded="false">📂</button>
+      <div class="pop-panel right" id="popDatos" hidden>
+        <h4>Datos cargados</h4>
+        <div id="datosSlot"></div>
+        <button class="ghost" id="btnReset" style="width:100%;margin-top:12px;" title="Los archivos nuevos se acumulan a los ya cargados. Usa esto solo si quieres vaciarlo todo y empezar de cero.">✕ Borrar todo y empezar de nuevo</button>
+      </div>
+    </div>
+
+    <div class="pop-wrap">
+      <button class="icon-btn" id="btnAjustes" title="Umbrales de alerta" aria-haspopup="true" aria-expanded="false">⚙</button>
+      <div class="pop-panel right" id="popAjustes" hidden style="width:330px;">
+        <h4>Umbrales de alerta</h4>
+        <div id="ajustesBody"></div>
+      </div>
+    </div>
+
+    <button class="icon-btn" id="btnPersonal" title="Registro manual de personas y horas trabajadas por línea/fecha/turno, para calcular kg por hora-persona (Mapex no trae esto).">👥</button>
+    <button class="icon-btn" id="btnExportPdf" title="Genera una vista imprimible con la selección actual de Planta/Área/Línea/Turno/Día — desde ahí, Ctrl+P o 'Guardar como PDF'.">🖨</button>
+    <button class="icon-btn" id="btnTheme" title="Cambiar entre modo claro y oscuro">◐</button>
+  </header>
+
+  <nav class="tabbar" id="tabbar" hidden>
+    <button data-tab="resumen" class="active">Resumen <span class="tab-badge" id="tabBadgeAlertas" hidden></span></button>
+    <button data-tab="lineas">Líneas</button>
+    <button data-tab="paros">Paros y turnos</button>
+    <button data-tab="historico">Histórico</button>
+    <button data-tab="detalle">Detalle</button>
+  </nav>
+
+  <!-- Pantalla de bienvenida: solo mientras no hay datos cargados -->
+  <div id="welcome">
+    <h1 class="welcome-title">KPIs Producción · Mapex</h1>
+    <p class="welcome-sub">Merma, sobrepeso, producción, paros y disponibilidad de todas las plantas y líneas. Todo se procesa en tu navegador — ningún archivo sale de este equipo.</p>
+    <section id="uploadSection">
+      <label class="dropzone" id="dz1">
+        <input type="file" id="file1" accept=".csv" multiple>
+        <h3>Detalle de producto (ProductReport) — obligatorio</h3>
+        <p>Arrastra aquí el CSV exportado de Mapex con el detalle por OF/producto (Merma, Rendimiento, Sobrepeso…). Puedes soltar varios cortes a la vez (o ir añadiendo uno por uno) — se acumulan sin duplicar, no se reemplazan.</p>
+        <div class="status" id="status1"></div>
+      </label>
+      <label class="dropzone" id="dz2">
+        <input type="file" id="file2" accept=".csv" multiple>
+        <h3>Turnos / Paros (His_CT_Group) <span class="badge-optional">opcional</span></h3>
+        <p>Añade este archivo si además quieres ver el desglose de disponibilidad y paros por turno. También acumula varios cortes sin duplicar.</p>
+        <div class="status" id="status2"></div>
+      </label>
+    </section>
+  </div>
+  <main class="views" id="views" hidden>
+
+    <!-- ============ RESUMEN: estado de la planta de un vistazo ============ -->
+    <section class="view active" data-view="resumen">
+      <div id="kpiRow"></div>
+      <div class="grid-side">
+        <div class="panel">
+          <header>
+            <h3>Atención</h3>
+            <span class="sub" id="alertasSub"></span>
+            <span class="right"><button class="ghost" id="btnAjustesAlt" style="padding:2px 9px;font-size:11.5px;">⚙ Umbrales</button></span>
+          </header>
+          <div class="body flush alert-list" id="alertList"></div>
+        </div>
+        <div class="stack">
+          <div class="card chart-card" id="chartTendencia"></div>
+          <div class="card chart-card" id="chartTopMerma"></div>
+        </div>
+      </div>
+      <div id="diag"></div>
+    </section>
+
+    <!-- ============ LÍNEAS ============ -->
+    <section class="view" data-view="lineas">
+      <div class="grid-side">
+        <div class="panel">
+          <header>
+            <h3>Resumen por línea</h3>
+            <span class="sub">Merma real vs. estándar, sobrepeso y disponibilidad de la selección</span>
+            <span class="right row-count" id="countLinea"></span>
+          </header>
+          <div class="body flush"><div id="tableLinea"></div></div>
+        </div>
+        <div class="card chart-card" id="chartTopProduccion"></div>
+      </div>
+    </section>
+
+    <!-- ============ PAROS Y TURNOS (His_CT_Group) ============ -->
+    <section class="view" data-view="paros">
+      <div class="grid-2x2" id="parosGrid">
+        <div class="card chart-card" id="chartParosPareto"></div>
+        <div class="card chart-card tall" id="chartDisponibilidadTurnos"></div>
+        <div class="card chart-card tall" id="chartProduccionTurno"></div>
+        <div class="panel">
+          <header>
+            <h3>Producción por turno y línea</h3>
+            <span class="sub">Reparto Mañana/Tarde completo — no le afecta el filtro Turno</span>
+          </header>
+          <div class="body flush"><div id="tableTurno"></div></div>
+        </div>
+      </div>
+      <div class="empty-note" id="parosEmpty" hidden>Carga el CSV <strong>His_CT_Group</strong> (botón 📂 arriba a la derecha) para ver paros, averías y disponibilidad por turno.</div>
+    </section>
+
+    <!-- ============ HISTÓRICO: un nivel a la vez, con drill-down ============ -->
+    <section class="view" data-view="historico">
+      <div class="row-controls">
+        <span class="seg-label">Nivel</span>
+        <div class="seg" id="histLevelSeg" role="group" aria-label="Nivel del histórico">
+          <button data-level="mes">Mes</button>
+          <button data-level="semana">Semana</button>
+          <button data-level="dia">Día</button>
+          <button data-level="turno" id="histLevelTurno" disabled title="Selecciona un día para ver su reparto por turno">Turno</button>
+        </div>
+        <div id="histBreadcrumb"></div>
+        <div class="hist-slider-row" id="histSliderActive"></div>
+      </div>
+
+      <div class="grid-2x3 hist-level" data-level="mes">
+        <div class="card chart-card" id="chartHistProdMes"></div>
+        <div class="card chart-card" id="chartHistMermaMes"></div>
+        <div class="card chart-card" id="chartHistParosMes"></div>
+        <div class="card chart-card" id="chartHistAveriasMes"></div>
+        <div class="card chart-card" id="chartHistAjustesMes"></div>
+        <div class="card chart-card" id="chartHistCambiosMes"></div>
+      </div>
+      <div class="grid-2x3 hist-level" data-level="semana">
+        <div class="card chart-card" id="chartHistProdSemana"></div>
+        <div class="card chart-card" id="chartHistMermaSemana"></div>
+        <div class="card chart-card" id="chartHistParosSemana"></div>
+        <div class="card chart-card" id="chartHistAveriasSemana"></div>
+        <div class="card chart-card" id="chartHistAjustesSemana"></div>
+        <div class="card chart-card" id="chartHistCambiosSemana"></div>
+      </div>
+      <div class="grid-2x3 hist-level" data-level="dia">
+        <div class="card chart-card" id="chartHistProdDia"></div>
+        <div class="card chart-card" id="chartHistMermaDia"></div>
+        <div class="card chart-card" id="chartHistParosDia"></div>
+        <div class="card chart-card" id="chartHistAveriasDia"></div>
+        <div class="card chart-card" id="chartHistAjustesDia"></div>
+        <div class="card chart-card" id="chartHistCambiosDia"></div>
+      </div>
+      <div class="grid-2x3 hist-level" data-level="turno" id="histTurnoWrap">
+        <div class="card chart-card" id="chartHistProdTurno"></div>
+        <div class="card chart-card" id="chartHistMermaTurno"></div>
+        <div class="card chart-card" id="chartHistParosTurno"></div>
+        <div class="card chart-card" id="chartHistAveriasTurno"></div>
+        <div class="card chart-card" id="chartHistAjustesTurno"></div>
+        <div class="card chart-card" id="chartHistCambiosTurno"></div>
+      </div>
+    </section>
+
+    <!-- ============ DETALLE (auditoría) ============ -->
+    <section class="view" data-view="detalle">
+      <div class="row-controls">
+        <div class="search-box"><input type="text" id="searchDetalle" placeholder="Buscar OF, artículo, descripción o línea…"></div>
+        <div class="seg" id="detalleSeg" role="group" aria-label="Tabla de detalle">
+          <button data-sub="articulo">Por artículo <span class="row-count" id="countArticulo"></span></button>
+          <button data-sub="of">Por OF y tramos <span class="row-count" id="countOF"></span></button>
+        </div>
+        <span class="row-count" id="detalleHint"></span>
+      </div>
+
+      <div class="detalle-sub" data-sub="articulo">
+        <div class="panel" style="flex:1;min-height:0;">
+          <header>
+            <h3>Detalle por artículo</h3>
+            <span class="sub">Clic en una cabecera para ordenar · clic en una fila para ver sus OF</span>
+          </header>
+          <div class="body flush"><div id="tableArticulo"></div></div>
+        </div>
+      </div>
+
+      <div class="detalle-sub stack" data-sub="of">
+        <div class="panel">
+          <header>
+            <h3>Producción por OF</h3>
+            <span class="sub">Una fila por orden de fabricación</span>
+          </header>
+          <div class="body flush"><div id="tableOF"></div></div>
+        </div>
+        <div class="panel" id="tramosBlock">
+          <header>
+            <h3>Tramos / paros por turno</h3>
+            <span class="sub" id="tramosHint">His_CT_Group no trae el nº de OF: se infiere cruzando Línea+Artículo+Fecha; si hay varias posibles se marca como ambiguo en vez de arriesgar</span>
+            <span class="right row-count" id="countTramo"></span>
+          </header>
+          <div class="body flush"><div id="tableTramo"></div></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="printReport" class="print-report overlay-view" hidden>
+    <div class="no-print print-toolbar">
+      <button class="ghost" id="printBack">← Volver al dashboard</button>
+      <button class="ghost" id="printNow">🖨 Imprimir / Guardar como PDF</button>
+    </div>
+    <div id="printReportBody"></div>
+  </div>
+
+  <div id="personalView" class="overlay-view" hidden>
+    <div style="display:flex; gap:8px; margin-bottom:18px;">
+      <button class="ghost" id="personalBack">← Volver al dashboard</button>
+    </div>
+    <div class="card" style="margin-bottom:18px;">
+      <h2 style="margin:0 0 4px; font-size:15px;">Horas de personal por línea / fecha / turno</h2>
+      <p class="hint" style="margin:0 0 14px;">Dato manual — Mapex no trae el número de personas en planta, y cambia día a día (8, 6, 5…). Se guarda solo en este navegador (no se sube a ningún sitio). Kg/hora-persona = Kg producidos ÷ (horas trabajadas × personas).</p>
+      <div class="filters-top-row">
+        <div class="filter-group">
+          <label class="title">Línea</label>
+          <select id="personalLinea"></select>
+        </div>
+        <div class="filter-group">
+          <label class="title">Fecha</label>
+          <input type="date" id="personalFecha">
+        </div>
+        <div class="filter-group">
+          <label class="title">Turno</label>
+          <div class="chips" id="personalTurnoChips">
+            <span class="chip active" data-turno="manana">Mañana</span>
+            <span class="chip" data-turno="tarde">Tarde</span>
+          </div>
+        </div>
+        <div class="filter-group">
+          <label class="title">Personas</label>
+          <input type="number" id="personalPersonas" min="1" step="1" style="width:90px;" placeholder="ej. 8">
+        </div>
+        <div class="filter-group">
+          <label class="title">Horas trabajadas</label>
+          <input type="number" id="personalHoras" min="0" step="0.5" style="width:100px;" placeholder="ej. 8">
+        </div>
+        <div class="filter-group">
+          <label class="title">&nbsp;</label>
+          <button class="ghost" id="personalGuardar">💾 Guardar</button>
+        </div>
+      </div>
+      <div id="personalPreview" style="margin-top:12px; font-size:13px; color:var(--text-secondary);"></div>
+    </div>
+
+    <div class="table-wrap">
+      <div id="personalTable"></div>
+    </div>
+  </div>
+</div>
+
+<div class="chart-tooltip" id="tooltip"></div>
+
+<script>
+/* ============================================================
+   1. MOTOR CSV — parseo robusto cp1252/UTF-8, ';' , decimal ','
+   ============================================================ */
+
+function decodeBuffer(buf) {
+  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+  const bad = (utf8.match(/�/g) || []).length;
+  if (bad > 3) return new TextDecoder("windows-1252").decode(buf);
+  return utf8;
+}
+
+function sniffDelimiter(firstLine) {
+  const semi = (firstLine.match(/;/g) || []).length;
+  const comma = (firstLine.match(/,/g) || []).length;
+  return semi >= comma ? ";" : ",";
+}
+
+function parseCsv(text, delimiter) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false, i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += c; i++; continue;
+    } else {
+      if (c === '"') { inQuotes = true; i++; continue; }
+      if (c === delimiter) { row.push(field); field = ""; i++; continue; }
+      if (c === "\r") { i++; continue; }
+      if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+      field += c; i++; continue;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function parseEsNumber(v) {
+  if (v === undefined || v === null) return null;
+  v = String(v).trim();
+  if (v === "" || v === "--" || v === "-") return null;
+  const neg = v.startsWith("-");
+  v = v.replace(/^-/, "").replace(/\./g, "").replace(",", ".");
+  const num = parseFloat(v);
+  return Number.isNaN(num) ? null : (neg ? -num : num);
+}
+
+function parseEsDate(v) {
+  if (!v) return null;
+  v = String(v).trim();
+  let m = v.match(/^(\d{4})\/(\d{2})\/(\d{2})/);
+  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+  m = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return null;
+}
+
+function normalizeHeader(s) {
+  return String(s || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function isoWeekInfo(date) {
+  // ISO 8601 week number + año-semana, y lunes/domingo de esa semana
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = (d.getUTCDay() + 6) % 7; // lunes=0
+  d.setUTCDate(d.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(((d - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+  const monday = new Date(date);
+  monday.setUTCDate(monday.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  return { year: d.getUTCFullYear(), week, monday, sunday, key: d.getUTCFullYear() + "-W" + String(week).padStart(2, "0") };
+}
+
+function readFileAsRows(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const buf = new Uint8Array(reader.result);
+        const text = decodeBuffer(buf);
+        const firstLineEnd = text.indexOf("\n");
+        const delimiter = sniffDelimiter(text.slice(0, firstLineEnd > 0 ? firstLineEnd : 500));
+        const rows = parseCsv(text, delimiter);
+        resolve(rows);
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function rowsToObjects(rows) {
+  const header = rows[0].map(h => h.replace(/^﻿/, ""));
+  const index = {};
+  header.forEach((h, i) => { index[normalizeHeader(h)] = i; });
+  const out = [];
+  for (let r = 1; r < rows.length; r++) {
+    if (!rows[r] || rows[r].length < 2) continue;
+    out.push(rows[r]);
+  }
+  return { header, index, dataRows: out };
+}
+
+function getCol(dataRow, index, canonicalName) {
+  const i = index[normalizeHeader(canonicalName)];
+  return i === undefined ? undefined : dataRow[i];
+}
+
+/* ============================================================
+   2. MAPEO DE COLUMNAS MAPEX -> MODELO INTERNO
+   ============================================================ */
+
+const PR_COLS = {
+  area: "Área", linea: "Línea", producto: "Producto", desc: "Descripción de producto",
+  periodo: "Periodo", of: "OF", inicio: "Inicio", fin: "Fin",
+  kg: "Peso encajadas (Kg)", mmpp: "Peso MMPP (Kg)", pesoUnitG: "Peso unitario teórico (g)",
+  udsCaja: "Uds. en caja", udsPlanning: "Uds. planning",
+  rendimiento: "Rendimiento (%)", rendimientoStd: "Rendimiento estándar (%)",
+  mermaKg: "Merma (Kg)", mermaPct: "Merma (%)", desvioRendPct: "Desvío de rendimiento (%)",
+  sobrepesoKg: "Sobrepeso (Kg)", sobrepesoPct: "Sobrepeso (%)",
+  disponibilidad: "Disponibilidad (%)", calidad: "Calidad (%)", oee: "OEE (%)"
+};
+
+const CT_COLS = {
+  area: "Área", centro: "CentroTrabajo", periodo: "Periodo", turno: "Turno", producto: "Producto",
+  desc: "Descripción producto", of: "OF",
+  tiempoTotal: "Tiempo Total", tiempoOperativa: "Tiempo línea operativa (h)",
+  disponibilidad: "Disponibilidad (%)", m: "M",
+  // Preparación/Producción/Mantenimiento/Act6-Act12 existen en el esquema de Mapex
+  // pero en esta planta siempre vienen vacías — el desglose real de paros está en
+  // estas otras columnas (confirmado contra el CSV real: son las únicas con datos).
+  parosAjustes: "Paros Ajustes", parosAV: "Paros AV", ppNivel2: "PP Nivel 2",
+  parosTND: "Paros TND", pnpNivel2: "PNP Nivel 2", ppCambios: "PP - Cambios (min)",
+  horaInicio: "Hora inicio", horaFin: "Hora fin", kg: "Kg",
+  operarios: "Operarios", horasOperarioTotales: "Horas operario totales (h)"
+};
+
+// Solo 2 turnos reales: Mañana (corta fijo a las 14h) y Tarde (arranca fijo a las 14h)
+function parseEsDateTime(v) {
+  if (!v) return null;
+  const m = String(v).trim().match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{1,2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +m[6]));
+}
+
+function shiftSecondsSplit(iniMs, finMs) {
+  // Solo hay 2 turnos reales: Mañana (corta fijo a las 14h, pero puede arrancar
+  // pronto, incluso antes de las 6h) y Tarde (arranca fijo a las 14h y a veces
+  // se alarga, pero nunca cruza medianoche). Por eso la franja "mañana" se
+  // define de 00:00 a 14:00 (para no perder arranques tempranos) y "tarde" de
+  // 14:00 a 24:00 (para no perder alargues) — no existe turno de noche.
+  const out = { manana: 0, tarde: 0 };
+  if (!(finMs > iniMs)) return out;
+  let dayStart = new Date(iniMs);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const windows = [["manana", 0, 14], ["tarde", 14, 24]];
+  while (dayStart.getTime() < finMs) {
+    for (const [name, a, b] of windows) {
+      const winStart = dayStart.getTime() + a * 3600000;
+      const winEnd = dayStart.getTime() + b * 3600000;
+      const oStart = Math.max(iniMs, winStart);
+      const oEnd = Math.min(finMs, winEnd);
+      if (oEnd > oStart) out[name] += (oEnd - oStart) / 1000;
+    }
+    dayStart = new Date(dayStart.getTime() + 86400000);
+  }
+  return out;
+}
+
+// Sábado (6) y domingo (0) en UTC. Los fines de semana normalmente solo se
+// trabaja por la mañana, así que mezclados con los laborables inflan el % de
+// producción del turno mañana — por eso es un filtro aparte, no solo un día más.
+function isWeekendDate(date) {
+  const d = date.getUTCDay();
+  return d === 0 || d === 6;
+}
+
+// El código de Área trae el prefijo de la planta antes del primer "_"
+// (ej. "N2_FILETEADOS" -> planta "N2"). CZ = Cierzo, N1-N7 = Noel 1-7.
+const PLANTA_LABELS = { CZ: "Cierzo" };
+function plantaCode(area) {
+  return (area || "").split("_")[0] || "?";
+}
+function plantaLabel(code) {
+  if (PLANTA_LABELS[code]) return PLANTA_LABELS[code];
+  const m = code.match(/^N(\d+)$/);
+  if (m) return "Noel " + m[1];
+  return code;
+}
+
+function mapProductRows(header, index, dataRows) {
+  const out = [];
+  let skipped = 0;
+  for (const r of dataRows) {
+    const linea = (getCol(r, index, PR_COLS.linea) || "").trim();
+    const periodo = parseEsDate(getCol(r, index, PR_COLS.periodo));
+    if (!linea || !periodo) { skipped++; continue; }
+    out.push({
+      area: (getCol(r, index, PR_COLS.area) || "").trim(),
+      linea,
+      producto: (getCol(r, index, PR_COLS.producto) || "").trim(),
+      desc: (getCol(r, index, PR_COLS.desc) || "").trim(),
+      periodo,
+      of: (getCol(r, index, PR_COLS.of) || "").trim(),
+      kg: parseEsNumber(getCol(r, index, PR_COLS.kg)) || 0,
+      mmpp: parseEsNumber(getCol(r, index, PR_COLS.mmpp)) || 0,
+      pesoUnitG: parseEsNumber(getCol(r, index, PR_COLS.pesoUnitG)),
+      udsCaja: parseEsNumber(getCol(r, index, PR_COLS.udsCaja)) || 0,
+      udsPlanning: parseEsNumber(getCol(r, index, PR_COLS.udsPlanning)) || 0,
+      rendimiento: parseEsNumber(getCol(r, index, PR_COLS.rendimiento)),
+      rendimientoStd: parseEsNumber(getCol(r, index, PR_COLS.rendimientoStd)),
+      mermaKg: parseEsNumber(getCol(r, index, PR_COLS.mermaKg)),
+      mermaPct: parseEsNumber(getCol(r, index, PR_COLS.mermaPct)),
+      desvioRendPct: parseEsNumber(getCol(r, index, PR_COLS.desvioRendPct)),
+      sobrepesoKg: parseEsNumber(getCol(r, index, PR_COLS.sobrepesoKg)),
+      sobrepesoPct: parseEsNumber(getCol(r, index, PR_COLS.sobrepesoPct)),
+      disponibilidad: parseEsNumber(getCol(r, index, PR_COLS.disponibilidad)),
+      calidad: parseEsNumber(getCol(r, index, PR_COLS.calidad)),
+      oee: parseEsNumber(getCol(r, index, PR_COLS.oee)),
+      inicio: parseEsDateTime(getCol(r, index, PR_COLS.inicio)),
+      fin: parseEsDateTime(getCol(r, index, PR_COLS.fin)),
+      turnoSplit: null,
+      aplicaStd: false, semana: null
+    });
+  }
+  for (const row of out) {
+    row.aplicaStd = row.rendimientoStd !== null && row.rendimientoStd > 0;
+    row.semana = isoWeekInfo(row.periodo);
+    // Reparto Mañana/Tarde de la propia OF según su Inicio-Fin, igual que en
+    // His_CT_Group — permite filtrar todo el dashboard (KPIs, tablas, gráficos)
+    // por turno sin necesidad del segundo archivo.
+    if (row.inicio && row.fin && row.fin > row.inicio) {
+      const seg = shiftSecondsSplit(row.inicio.getTime(), row.fin.getTime());
+      const total = seg.manana + seg.tarde;
+      row.turnoSplit = total > 0
+        ? { manana: seg.manana / total, tarde: seg.tarde / total }
+        : { manana: 0, tarde: 0 };
+    } else {
+      row.turnoSplit = { manana: 0, tarde: 0 };
+    }
+  }
+  return { rows: out, skipped };
+}
+
+function mapCtRows(header, index, dataRows) {
+  const out = [];
+  for (const r of dataRows) {
+    const centro = (getCol(r, index, CT_COLS.centro) || "").trim();
+    const periodo = parseEsDate(getCol(r, index, CT_COLS.periodo));
+    if (!centro || !periodo) continue;
+    out.push({
+      area: (getCol(r, index, CT_COLS.area) || "").trim(),
+      linea: centro,
+      periodo,
+      turno: (getCol(r, index, CT_COLS.turno) || "").trim(),
+      producto: (getCol(r, index, CT_COLS.producto) || "").trim(),
+      desc: (getCol(r, index, CT_COLS.desc) || "").trim(),
+      of: (getCol(r, index, CT_COLS.of) || "").trim(),
+      tiempoTotal: parseEsNumber(getCol(r, index, CT_COLS.tiempoTotal)) || 0,
+      tiempoOperativa: parseEsNumber(getCol(r, index, CT_COLS.tiempoOperativa)) || 0,
+      disponibilidad: parseEsNumber(getCol(r, index, CT_COLS.disponibilidad)),
+      m: parseEsNumber(getCol(r, index, CT_COLS.m)) || 0,
+      parosAjustes: parseEsNumber(getCol(r, index, CT_COLS.parosAjustes)) || 0,
+      parosAV: parseEsNumber(getCol(r, index, CT_COLS.parosAV)) || 0,
+      ppNivel2: parseEsNumber(getCol(r, index, CT_COLS.ppNivel2)) || 0,
+      parosTND: parseEsNumber(getCol(r, index, CT_COLS.parosTND)) || 0,
+      pnpNivel2: parseEsNumber(getCol(r, index, CT_COLS.pnpNivel2)) || 0,
+      ppCambios: parseEsNumber(getCol(r, index, CT_COLS.ppCambios)) || 0,
+      kg: parseEsNumber(getCol(r, index, CT_COLS.kg)) || 0,
+      operarios: parseEsNumber(getCol(r, index, CT_COLS.operarios)),
+      horasOperarioTotales: parseEsNumber(getCol(r, index, CT_COLS.horasOperarioTotales)),
+      horaInicio: parseEsDateTime(getCol(r, index, CT_COLS.horaInicio)),
+      horaFin: parseEsDateTime(getCol(r, index, CT_COLS.horaFin)),
+      turnoSplit: null,
+      semana: isoWeekInfo(periodo)
+    });
+  }
+  for (const row of out) {
+    if (row.horaInicio && row.horaFin && row.horaFin > row.horaInicio) {
+      const seg = shiftSecondsSplit(row.horaInicio.getTime(), row.horaFin.getTime());
+      const total = seg.manana + seg.tarde;
+      row.turnoSplit = total > 0
+        ? { manana: seg.manana / total, tarde: seg.tarde / total }
+        : { manana: 0, tarde: 0 };
+    } else {
+      row.turnoSplit = { manana: 0, tarde: 0 };
+    }
+  }
+  return out;
+}
+
+/* ============================================================
+   3. ESTADO GLOBAL
+   ============================================================ */
+
+const state = {
+  productRows: [], ctRows: [],
+  fileLog: { pr: [], ct: [] },
+  filters: { desde: null, hasta: null, areas: new Set(), lineas: new Set(), turno: "ambos", dia: "todos" },
+  sort: { table: "articulo", col: "kg", dir: "desc" },
+  sortOF: { col: "mermaPct", dir: "desc" },
+  sortTramo: { col: "averias", dir: "desc" },
+  drill: { monthKey: null, weekKey: null, dayKey: null },
+  ui: {
+    expandedAreas: new Set(), expandedPlantas: new Set(),
+    histOffset: { mes: null, semana: null, dia: null },
+    tab: "resumen",        // pestaña activa
+    histLevel: "mes",      // nivel visible del histórico
+    detalleSub: "articulo" // sub-tabla activa en Detalle
+  },
+  // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
+  // Se separan del resto del estado a propósito: son preferencias del usuario,
+  // no dependen de qué CSV esté cargado (igual que state.personal).
+  settings: {
+    dispOk: 85, dispBad: 70,   // semáforo de disponibilidad (verde ≥ / rojo <)
+    paroPct: 30,               // % de paro sobre tiempo total que dispara alerta
+    mermaPp: 0.5,              // pp de desviación sobre estándar que dispara alerta
+    rules: { paros: true, merma: false, disponibilidad: false, caida: false }
+  },
+  // Registro manual de personas/horas por línea+fecha+turno (Mapex no lo trae).
+  // Clave: linea+"||"+fechaISO+"||"+turno. Persistido en localStorage, no en el
+  // estado del dashboard normal — no depende de qué CSV tengas cargado.
+  personal: new Map(),
+  // Cuando vale { linea, fecha }, el informe añade el bloque "Jornada completa"
+  // con Mañana y Tarde juntos. Lo pone solo el botón "2 turnos" de la pestaña
+  // Personal y se limpia en cuanto se genera cualquier otro informe, para que
+  // no se cuele en el "Exportar informe" normal.
+  printPersonalPair: null
+};
+
+const fmtInt = n => n === null || n === undefined || Number.isNaN(n) ? "—" : n.toLocaleString("es-ES", { maximumFractionDigits: 0 });
+const fmtKg = n => n === null || n === undefined || Number.isNaN(n) ? "—" : n.toLocaleString("es-ES", { maximumFractionDigits: 0 }) + " kg";
+const fmtPct = (n, d = 2) => n === null || n === undefined || Number.isNaN(n) ? "—" : n.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d }) + " %";
+const fmtDate = d => d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
+const toInputDate = d => d.toISOString().slice(0, 10);
+
+/* ============================================================
+   4. CARGA DE ARCHIVOS
+   ============================================================ */
+
+// Cada carga se FUSIONA con lo que ya había (no reemplaza) — así puedes subir
+// Mapex mes a mes (limitación suya, no deja exportar más de ~1-1.5 meses de
+// golpe) y acumular un histórico grande. Deduplicado: en ProductReport cada
+// fila es una OF, así que el OF es la clave; en His_CT_Group no hay OF fiable,
+// así que se usa línea+fecha+artículo+horario como clave compuesta.
+function prRowKey(r) {
+  // OJO: una misma OF puede repartirse legítimamente en varias filas (distinta
+  // línea, o continuada en otro día) — el OF solo NO es identificador único.
+  // Línea+OF+Inicio+Fin sí lo es (comprobado contra datos reales: 0 colisiones
+  // en 1427 filas).
+  return r.linea + "||" + r.of + "||" +
+    (r.inicio ? r.inicio.getTime() : "x") + "||" + (r.fin ? r.fin.getTime() : "x");
+}
+
+function mergeProductRows(newRows) {
+  const existingKeys = new Set(state.productRows.map(prRowKey));
+  let added = 0, dup = 0;
+  for (const r of newRows) {
+    const k = prRowKey(r);
+    if (existingKeys.has(k)) { dup++; continue; }
+    existingKeys.add(k);
+    state.productRows.push(r);
+    added++;
+  }
+  return { added, dup };
+}
+
+function ctRowKey(r) {
+  return r.linea + "||" + r.periodo.getTime() + "||" + r.producto + "||" +
+    (r.horaInicio ? r.horaInicio.getTime() : "x") + "||" + (r.horaFin ? r.horaFin.getTime() : "x");
+}
+
+function mergeCtRows(newRows) {
+  const existingKeys = new Set(state.ctRows.map(ctRowKey));
+  let added = 0, dup = 0;
+  for (const r of newRows) {
+    const k = ctRowKey(r);
+    if (existingKeys.has(k)) { dup++; continue; }
+    existingKeys.add(k);
+    state.ctRows.push(r);
+    added++;
+  }
+  return { added, dup };
+}
+
+/* ============================================================
+   4.5 SHELL — pestañas, popovers de la barra fija y ajustes
+   ============================================================ */
+
+const SETTINGS_KEY = "mapexSettingsV1";
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    Object.assign(state.settings, s, { rules: Object.assign({}, state.settings.rules, s.rules || {}) });
+  } catch (err) {
+    console.warn("No se pudieron leer los ajustes guardados", err);
+  }
+}
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); }
+  catch (err) { console.warn("No se pudieron guardar los ajustes", err); }
+}
+
+// --- Popovers de la barra superior -------------------------------------
+// Un solo popover abierto a la vez; se cierra con clic fuera o Esc.
+const POPOVERS = [
+  ["btnPeriodo", "popPeriodo"], ["btnAlcance", "popAlcance"],
+  ["btnDatos", "popDatos"], ["btnAjustes", "popAjustes"]
+];
+
+function closePopovers(exceptId) {
+  for (const [btnId, panelId] of POPOVERS) {
+    if (panelId === exceptId) continue;
+    document.getElementById(panelId).hidden = true;
+    document.getElementById(btnId).setAttribute("aria-expanded", "false");
+    document.getElementById(btnId).classList.remove("on");
+  }
+}
+
+function togglePopover(btnId, panelId) {
+  const panel = document.getElementById(panelId);
+  const btn = document.getElementById(btnId);
+  const willOpen = panel.hidden;
+  closePopovers(willOpen ? panelId : null);
+  panel.hidden = !willOpen;
+  btn.setAttribute("aria-expanded", String(willOpen));
+  btn.classList.toggle("on", willOpen);
+}
+
+for (const [btnId, panelId] of POPOVERS) {
+  document.getElementById(btnId).addEventListener("click", e => {
+    e.stopPropagation();
+    togglePopover(btnId, panelId);
+  });
+  document.getElementById(panelId).addEventListener("click", e => e.stopPropagation());
+}
+document.addEventListener("click", () => closePopovers(null));
+document.addEventListener("keydown", e => { if (e.key === "Escape") closePopovers(null); });
+
+// --- Pestañas -----------------------------------------------------------
+function setTab(tab) {
+  state.ui.tab = tab;
+  document.querySelectorAll("#tabbar button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.dataset.view === tab));
+}
+
+document.querySelectorAll("#tabbar button").forEach(btn => {
+  btn.addEventListener("click", () => setTab(btn.dataset.tab));
+});
+
+// Atajos 1-5 para saltar de pestaña sin tocar el ratón (no dispara si se está
+// escribiendo en un campo de búsqueda o de número).
+const TAB_ORDER = ["resumen", "lineas", "paros", "historico", "detalle"];
+document.addEventListener("keydown", e => {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const t = e.target.tagName;
+  if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") return;
+  const i = "12345".indexOf(e.key);
+  if (i >= 0 && document.getElementById("tabbar").hidden === false) setTab(TAB_ORDER[i]);
+});
+
+// --- Sub-vistas: nivel de histórico y tabla de detalle -------------------
+function setHistLevel(level) {
+  state.ui.histLevel = level;
+  document.querySelectorAll("#histLevelSeg button").forEach(b => b.classList.toggle("active", b.dataset.level === level));
+  document.querySelectorAll(".hist-level").forEach(g => g.classList.toggle("active", g.dataset.level === level));
+  renderHistSliderActive();
+}
+
+document.querySelectorAll("#histLevelSeg button").forEach(btn => {
+  btn.addEventListener("click", () => { if (!btn.disabled) setHistLevel(btn.dataset.level); });
+});
+
+function setDetalleSub(sub) {
+  state.ui.detalleSub = sub;
+  document.querySelectorAll("#detalleSeg button").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
+  document.querySelectorAll(".detalle-sub").forEach(g => g.classList.toggle("active", g.dataset.sub === sub));
+}
+
+document.querySelectorAll("#detalleSeg button").forEach(btn => {
+  btn.addEventListener("click", () => setDetalleSub(btn.dataset.sub));
+});
+
+// --- Panel de ajustes ---------------------------------------------------
+const RULE_LABELS = {
+  paros: "Paros / averías altos",
+  merma: "Merma sobre estándar",
+  disponibilidad: "Disponibilidad baja",
+  caida: "Empeora vs. periodo anterior"
+};
+
+function renderAjustes() {
+  const s = state.settings;
+  const num = (id, val, min, max, step, unit) =>
+    `<input type="number" id="${id}" value="${val}" min="${min}" max="${max}" step="${step}"><span class="unit">${unit}</span>`;
+
+  document.getElementById("ajustesBody").innerHTML = `
+    <div class="set-row">
+      <label class="name" for="setPar"><input type="checkbox" data-rule="paros" ${s.rules.paros ? "checked" : ""}> ${RULE_LABELS.paros}</label>
+      ${num("setPar", s.paroPct, 0, 100, 1, "%")}
+    </div>
+    <div class="set-row">
+      <label class="name" for="setMer"><input type="checkbox" data-rule="merma" ${s.rules.merma ? "checked" : ""}> ${RULE_LABELS.merma}</label>
+      ${num("setMer", s.mermaPp, 0, 50, 0.1, "pp")}
+    </div>
+    <div class="set-row">
+      <label class="name" for="setDisp"><input type="checkbox" data-rule="disponibilidad" ${s.rules.disponibilidad ? "checked" : ""}> ${RULE_LABELS.disponibilidad}</label>
+      ${num("setDisp", s.dispBad, 0, 100, 1, "%")}
+    </div>
+    <div class="set-row">
+      <label class="name"><input type="checkbox" data-rule="caida" ${s.rules.caida ? "checked" : ""}> ${RULE_LABELS.caida}</label>
+    </div>
+    <div class="set-row">
+      <label class="name" for="setDispOk">Disponibilidad “bien” (verde) a partir de</label>
+      ${num("setDispOk", s.dispOk, 0, 100, 1, "%")}
+    </div>
+    <p class="set-hint">Los umbrales se guardan en este navegador. La disponibilidad de Mapex es aproximada — contrástala con tu reporte oficial antes de usarla como cifra de cierre.</p>
+  `;
+
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      const v = parseFloat(el.value);
+      if (!Number.isNaN(v)) { state.settings[key] = v; saveSettings(); renderAll(); }
+    });
+  };
+  bind("setPar", "paroPct");
+  bind("setMer", "mermaPp");
+  bind("setDisp", "dispBad");
+  bind("setDispOk", "dispOk");
+
+  document.querySelectorAll("#ajustesBody input[data-rule]").forEach(cb => {
+    cb.addEventListener("change", () => {
+      state.settings.rules[cb.dataset.rule] = cb.checked;
+      saveSettings();
+      renderAll();
+    });
+  });
+}
+
+document.getElementById("btnAjustesAlt").addEventListener("click", e => {
+  e.stopPropagation();
+  setTab("resumen");
+  togglePopover("btnAjustes", "popAjustes");
+});
+
+function setupDropzone(dzId, fileInputId, statusId, onFile) {
+  const dz = document.getElementById(dzId);
+  const input = document.getElementById(fileInputId);
+  const status = document.getElementById(statusId);
+  dz.addEventListener("click", () => input.click());
+  dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+  dz.addEventListener("drop", e => {
+    e.preventDefault(); dz.classList.remove("drag");
+    if (e.dataTransfer.files.length) handleFiles([...e.dataTransfer.files]);
+  });
+  input.addEventListener("change", () => {
+    if (input.files.length) handleFiles([...input.files]);
+    input.value = "";
+  });
+
+  async function handleFiles(files) {
+    for (const file of files) {
+      status.className = "status";
+      status.textContent = "Leyendo " + file.name + "…";
+      try {
+        const rows = await readFileAsRows(file);
+        const { header, index, dataRows } = rowsToObjects(rows);
+        onFile(header, index, dataRows, file.name);
+      } catch (err) {
+        status.className = "status err";
+        status.textContent = "Error leyendo " + file.name + ": " + err.message;
+        console.error(err);
+      }
+    }
+  }
+}
+
+function updateStatusPR() {
+  const status = document.getElementById("status1");
+  const log = state.fileLog.pr;
+  const totalDup = log.reduce((s, e) => s + e.dup, 0);
+  const totalSkipped = log.reduce((s, e) => s + e.skipped, 0);
+  status.className = "status ok";
+  status.textContent = `✓ ${log.length} archivo${log.length === 1 ? "" : "s"} · ${state.productRows.length.toLocaleString("es-ES")} filas acumuladas` +
+    (totalDup ? ` · ${totalDup} duplicadas omitidas` : "") +
+    (totalSkipped ? ` · ${totalSkipped} descartadas sin línea/fecha` : "");
+}
+
+function updateStatusCT() {
+  const status = document.getElementById("status2");
+  const log = state.fileLog.ct;
+  const totalDup = log.reduce((s, e) => s + e.dup, 0);
+  status.className = "status ok";
+  status.textContent = `✓ ${log.length} archivo${log.length === 1 ? "" : "s"} · ${state.ctRows.length.toLocaleString("es-ES")} filas acumuladas` +
+    (totalDup ? ` · ${totalDup} duplicadas omitidas` : "");
+}
+
+// Al cargar el primer archivo la pantalla de bienvenida desaparece y las
+// dropzones se mudan al popover "Datos" de la barra superior: cargar CSV es una
+// acción semanal, no merece ocupar sitio permanente en la pantalla de trabajo.
+function enterDashboard() {
+  if (!document.getElementById("welcome").hidden) {
+    document.getElementById("datosSlot").appendChild(document.getElementById("uploadSection"));
+    document.getElementById("welcome").hidden = true;
+  }
+  document.getElementById("topbar").hidden = false;
+  document.getElementById("tabbar").hidden = false;
+  document.getElementById("views").hidden = false;
+}
+
+setupDropzone("dz1", "file1", "status1", (header, index, dataRows, name) => {
+  const { rows, skipped } = mapProductRows(header, index, dataRows);
+  const { added, dup } = mergeProductRows(rows);
+  state.fileLog.pr.push({ name, added, dup, skipped });
+  initFiltersFromData(rows);
+  enterDashboard();
+  renderFilters();
+  renderAll();
+  updateStatusPR();
+});
+
+setupDropzone("dz2", "file2", "status2", (header, index, dataRows, name) => {
+  const rows = mapCtRows(header, index, dataRows);
+  const { added, dup } = mergeCtRows(rows);
+  state.fileLog.ct.push({ name, added, dup });
+  // BUG: si His_CT_Group trae una línea/área que ProductReport nunca mencionó
+  // (código de línea distinto o retirado en años anteriores, cobertura parcial…),
+  // el filtro por línea ("lineas.has(r.linea)" en getFilteredCtRowsBase/getScopedCtRows)
+  // la descarta silenciosamente para siempre — nunca aparece en ningún panel de
+  // turnos/paros, sin aviso. Igual que hace initFiltersFromData con ProductReport,
+  // hay que ampliar los Sets de filtro con lo que traiga también este archivo.
+  for (const a of new Set(rows.map(r => r.area))) state.filters.areas.add(a);
+  for (const l of new Set(rows.map(r => r.linea))) state.filters.lineas.add(l);
+  applyCtAvailability();
+  renderFilters();
+  renderAll();
+  updateStatusCT();
+});
+
+// His_CT_Group es opcional: sin él la pestaña de paros y la tabla de tramos no
+// tienen nada que enseñar, así que se desactivan en vez de mostrarse vacías.
+function applyCtAvailability() {
+  const has = state.ctRows.length > 0;
+  document.getElementById("parosGrid").hidden = !has;
+  document.getElementById("parosEmpty").hidden = has;
+  document.getElementById("tramosBlock").hidden = !has;
+  const tabParos = document.querySelector('#tabbar button[data-tab="paros"]');
+  tabParos.disabled = !has;
+  tabParos.title = has ? "" : "Necesita el CSV His_CT_Group";
+}
+
+document.getElementById("btnReset").addEventListener("click", () => location.reload());
+
+document.getElementById("btnTheme").addEventListener("click", () => {
+  const html = document.documentElement;
+  const isDark = html.getAttribute("data-theme") === "dark"
+    || (!html.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const next = isDark ? "light" : "dark";
+  html.setAttribute("data-theme", next);
+  document.getElementById("btnTheme").title = next === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro";
+  renderAll();
+});
+
+document.getElementById("btnExportPdf").addEventListener("click", () => {
+  // El informe general nunca lleva el bloque de jornada completa: ese solo
+  // aparece si se pide desde el botón "2 turnos" de la pestaña Personal.
+  state.printPersonalPair = null;
+  renderPrintReport();
+  document.getElementById("printReport").hidden = false;
+  document.getElementById("printReport").scrollTop = 0;
+});
+document.getElementById("printBack").addEventListener("click", () => {
+  document.getElementById("printReport").hidden = true;
+});
+document.getElementById("printNow").addEventListener("click", () => window.print());
+
+/* ============================================================
+   5. FILTROS
+   ============================================================ */
+
+function initFiltersFromData(newRows) {
+  if (!state.productRows.length) return;
+  // Primera carga: selecciona todo y se sitúa en la última semana disponible.
+  // Cargas siguientes (acumulando meses): amplía Área/Línea con lo nuevo sin
+  // deseleccionar lo que ya tenías elegido, y NO toca Desde/Hasta — así no te
+  // cambia la vista que estabas mirando cada vez que añades un mes más.
+  const isFirstLoad = state.filters.areas.size === 0 && state.filters.lineas.size === 0;
+  const scope = newRows && newRows.length ? newRows : state.productRows;
+  for (const a of new Set(scope.map(r => r.area))) state.filters.areas.add(a);
+  for (const l of new Set(scope.map(r => r.linea))) state.filters.lineas.add(l);
+  if (isFirstLoad) {
+    const dates = state.productRows.map(r => r.periodo.getTime());
+    const maxDate = new Date(Math.max(...dates));
+    const info = isoWeekInfo(maxDate);
+    const minAvail = new Date(Math.min(...dates));
+    state.filters.desde = info.monday < minAvail ? minAvail : info.monday;
+    state.filters.hasta = maxDate;
+  }
+  renderFilters();
+}
+
+function getWeekOptions() {
+  const map = new Map();
+  for (const r of state.productRows) {
+    if (!map.has(r.semana.key)) map.set(r.semana.key, r.semana);
+  }
+  return [...map.values()].sort((a, b) => b.monday - a.monday);
+}
+
+function renderFilters() {
+  const el = document.getElementById("filters");
+  // El acordeón se construye con la UNIÓN de ambos archivos, no solo con
+  // ProductReport. His_CT_Group puede traer líneas/áreas que ProductReport no
+  // menciona (código renombrado, cobertura distinta): la carga ya las añade a
+  // state.filters para no descartarlas en silencio, así que también tienen que
+  // aparecer aquí. Si no, el contador quedaba absurdo ("17/15 áreas") y esas
+  // líneas eran imposibles de deseleccionar.
+  const todasLasFilas = [...state.productRows, ...state.ctRows];
+  const areas = [...new Set(todasLasFilas.map(r => r.area).filter(Boolean))].sort();
+  const lineasPorArea = new Map();
+  for (const a of areas) {
+    lineasPorArea.set(a, [...new Set(todasLasFilas.filter(r => r.area === a).map(r => r.linea))].sort());
+  }
+  const todasLasLineas = [...new Set(todasLasFilas.map(r => r.linea))];
+  const plantas = [...new Set(areas.map(plantaCode))].sort();
+  const areasPorPlanta = new Map();
+  for (const p of plantas) areasPorPlanta.set(p, areas.filter(a => plantaCode(a) === p));
+  const weeks = getWeekOptions();
+
+  // El rango de fechas vive en el popover "Periodo" de la barra fija.
+  document.getElementById("periodoControls").innerHTML = `
+    <div class="filters-top-row">
+      <div class="filter-group">
+        <label class="title">Semana</label>
+        <select id="weekSelect">
+          <option value="">— rango personalizado —</option>
+          ${weeks.map(w => `<option value="${w.key}">Semana ${w.week} · ${w.year} (${fmtDate(w.monday)}–${fmtDate(w.sunday)})</option>`).join("")}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="title">Desde</label>
+        <input type="date" id="dateDesde" value="${toInputDate(state.filters.desde)}">
+      </div>
+      <div class="filter-group">
+        <label class="title">Hasta</label>
+        <input type="date" id="dateHasta" value="${toInputDate(state.filters.hasta)}">
+      </div>
+    </div>`;
+
+  // Turno y Día son segmentados fijos en la barra: se cambian sin abrir nada.
+  document.querySelectorAll("#turnoSeg button").forEach(b => b.classList.toggle("active", b.dataset.turno === state.filters.turno));
+  document.querySelectorAll("#diaSeg button").forEach(b => b.classList.toggle("active", b.dataset.dia === state.filters.dia));
+  renderTopbarLabels();
+
+  el.innerHTML = `
+    <div class="filter-group full">
+      <label class="title">
+        ${state.filters.areas.size}/${areas.length} áreas · ${state.filters.lineas.size}/${todasLasLineas.length} líneas
+        <button class="ghost" id="areaAll" style="padding:2px 8px;font-size:11px;">todas</button>
+        <button class="ghost" id="areaExpandAll" style="padding:2px 8px;font-size:11px;">${state.ui.expandedAreas.size || state.ui.expandedPlantas.size ? "colapsar todas" : "desplegar todas"}</button>
+      </label>
+      <div class="area-accordion" id="areaAccordion">
+        ${plantas.map(p => {
+          const areasDePlanta = areasPorPlanta.get(p) || [];
+          const lineasDePlanta = areasDePlanta.flatMap(a => lineasPorArea.get(a) || []);
+          const areasSeleccionadas = areasDePlanta.filter(a => state.filters.areas.has(a)).length;
+          const plantaExpanded = state.ui.expandedPlantas.has(p);
+          return `
+          <div class="planta-panel ${plantaExpanded ? "expanded" : ""}">
+            <div class="planta-panel-header">
+              <button class="area-toggle-btn" data-toggle-planta="${p}" aria-expanded="${plantaExpanded}" title="${plantaExpanded ? "Colapsar" : "Desplegar"}">
+                <span class="area-caret">▶</span>
+              </button>
+              <span class="chip planta-chip ${areasSeleccionadas === areasDePlanta.length ? "active" : ""}" data-planta="${p}">${plantaLabel(p)}</span>
+              <span class="area-count">${areasSeleccionadas}/${areasDePlanta.length} áreas · ${lineasDePlanta.length} líneas</span>
+            </div>
+            ${plantaExpanded ? `
+              <div class="planta-body">
+                ${areasDePlanta.map(a => {
+                  const lineasDeArea = lineasPorArea.get(a) || [];
+                  const seleccionadas = lineasDeArea.filter(l => state.filters.lineas.has(l)).length;
+                  const expanded = state.ui.expandedAreas.has(a);
+                  return `
+                  <div class="area-panel ${expanded ? "expanded" : ""}">
+                    <div class="area-panel-header">
+                      <button class="area-toggle-btn" data-toggle-area="${a}" aria-expanded="${expanded}" title="${expanded ? "Colapsar" : "Desplegar"}">
+                        <span class="area-caret">▶</span>
+                      </button>
+                      <span class="chip ${state.filters.areas.has(a) ? "active" : ""}" data-area="${a}">${a}</span>
+                      <span class="area-count">${seleccionadas}/${lineasDeArea.length} líneas</span>
+                    </div>
+                    ${expanded ? `
+                      <div class="linea-subchips">
+                        ${lineasDeArea.map(l => `<span class="chip ${state.filters.lineas.has(l) ? "active" : ""}" data-linea="${l}">${l}</span>`).join("")}
+                      </div>
+                    ` : ""}
+                  </div>`;
+                }).join("")}
+              </div>
+            ` : ""}
+          </div>`;
+        }).join("")}
+      </div>
+    </div>
+  `;
+
+  document.getElementById("weekSelect").addEventListener("change", e => {
+    const w = weeks.find(w => w.key === e.target.value);
+    if (w) {
+      const dates = state.productRows.filter(r => r.semana.key === w.key).map(r => r.periodo.getTime());
+      state.filters.desde = new Date(Math.min(...dates));
+      state.filters.hasta = new Date(Math.max(...dates));
+      renderFilters(); renderAll();
+    }
+  });
+  document.getElementById("dateDesde").addEventListener("change", e => {
+    state.filters.desde = new Date(e.target.value + "T00:00:00Z"); renderTopbarLabels(); renderAll();
+  });
+  document.getElementById("dateHasta").addEventListener("change", e => {
+    state.filters.hasta = new Date(e.target.value + "T00:00:00Z"); renderTopbarLabels(); renderAll();
+  });
+  el.querySelectorAll("[data-toggle-planta]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const p = btn.dataset.togglePlanta;
+      if (state.ui.expandedPlantas.has(p)) state.ui.expandedPlantas.delete(p); else state.ui.expandedPlantas.add(p);
+      renderFilters();
+    });
+  });
+  el.querySelectorAll("[data-toggle-area]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const a = btn.dataset.toggleArea;
+      if (state.ui.expandedAreas.has(a)) state.ui.expandedAreas.delete(a); else state.ui.expandedAreas.add(a);
+      renderFilters();
+    });
+  });
+  document.getElementById("areaExpandAll").addEventListener("click", () => {
+    if (state.ui.expandedAreas.size || state.ui.expandedPlantas.size) {
+      state.ui.expandedAreas.clear();
+      state.ui.expandedPlantas.clear();
+    } else {
+      areas.forEach(a => state.ui.expandedAreas.add(a));
+      plantas.forEach(p => state.ui.expandedPlantas.add(p));
+    }
+    renderFilters();
+  });
+  el.querySelectorAll("[data-planta]").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const p = chip.dataset.planta;
+      const areasDePlanta = areasPorPlanta.get(p) || [];
+      const todasSeleccionadas = areasDePlanta.every(a => state.filters.areas.has(a));
+      const lineasDePlanta = areasDePlanta.flatMap(a => lineasPorArea.get(a) || []);
+      if (todasSeleccionadas) {
+        areasDePlanta.forEach(a => state.filters.areas.delete(a));
+        lineasDePlanta.forEach(l => state.filters.lineas.delete(l));
+      } else {
+        areasDePlanta.forEach(a => state.filters.areas.add(a));
+        lineasDePlanta.forEach(l => state.filters.lineas.add(l));
+      }
+      renderFilters(); renderAll();
+    });
+  });
+  el.querySelectorAll("[data-area]").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const a = chip.dataset.area;
+      if (state.filters.areas.has(a)) state.filters.areas.delete(a); else state.filters.areas.add(a);
+      renderFilters(); renderAll();
+    });
+  });
+  el.querySelectorAll("[data-linea]").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const l = chip.dataset.linea;
+      if (state.filters.lineas.has(l)) state.filters.lineas.delete(l); else state.filters.lineas.add(l);
+      renderFilters(); renderAll();
+    });
+  });
+  document.getElementById("areaAll").addEventListener("click", () => {
+    state.filters.areas = new Set(areas);
+    state.filters.lineas = new Set(todasLasLineas);
+    renderFilters(); renderAll();
+  });
+}
+
+// Turno y Día son segmentados fijos de la barra: se registran una sola vez, no
+// en cada renderFilters (su marcado no se regenera, solo la clase .active).
+document.querySelectorAll("#turnoSeg button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    state.filters.turno = btn.dataset.turno;
+    renderFilters(); renderAll();
+  });
+});
+document.querySelectorAll("#diaSeg button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    state.filters.dia = btn.dataset.dia;
+    renderFilters(); renderAll();
+  });
+});
+
+// Resúmenes que se leen en los botones de la barra sin abrir ningún panel.
+function renderTopbarLabels() {
+  const f = state.filters;
+  const semanas = new Set(state.productRows
+    .filter(r => (!f.desde || r.periodo >= f.desde) && (!f.hasta || r.periodo <= f.hasta))
+    .map(r => r.semana.key));
+  const rango = f.desde && f.hasta ? `${fmtDate(f.desde)} – ${fmtDate(f.hasta)}` : "todo";
+  document.getElementById("periodoLabel").textContent =
+    semanas.size === 1 ? `S${[...semanas][0].split("-W")[1]} · ${rango}` : rango;
+
+  const todas = [...state.productRows, ...state.ctRows];
+  const areas = [...new Set(todas.map(r => r.area).filter(Boolean))];
+  const lineas = [...new Set(todas.map(r => r.linea))];
+  const nA = f.areas.size, nL = f.lineas.size;
+  const plural = (n, sing, pl) => `${n} ${n === 1 ? sing : pl}`;
+  document.getElementById("alcanceLabel").textContent =
+    (nA >= areas.length && nL >= lineas.length)
+      ? "Toda la planta"
+      : `${plural(nA, "área", "áreas")} · ${plural(nL, "línea", "líneas")}`;
+}
+
+// Cuando se filtra por un turno concreto, cada fila se reescala por la fracción
+// de su Inicio-Fin que cae en ese turno (turnoSplit) — no se incluye/excluye
+// entera, se prorratea igual que en la tabla "Producción por turno". Los campos
+// en porcentaje (rendimientoStd, disponibilidad, etc.) no se tocan: siguen
+// representando la misma tasa, solo cambia el peso (kg/uds/tiempo) que aporta
+// cada fila a las sumas ponderadas.
+function scaleRowByTurno(row, turno, fields) {
+  const frac = row.turnoSplit ? row.turnoSplit[turno] || 0 : 0;
+  if (frac === 1) return row;
+  const scaled = { ...row };
+  for (const f of fields) scaled[f] = (row[f] || 0) * frac;
+  return scaled;
+}
+
+function applyTurnoFilter(rows, turno, fields) {
+  if (turno === "ambos") return rows;
+  return rows.map(r => scaleRowByTurno(r, turno, fields)).filter(r => fields.some(f => r[f] !== 0));
+}
+
+const PR_TURNO_FIELDS = ["kg", "mmpp", "mermaKg", "sobrepesoKg", "udsCaja", "udsPlanning"];
+const CT_TURNO_FIELDS = ["kg", "tiempoTotal", "tiempoOperativa", "m", "parosAjustes", "parosAV", "ppNivel2", "parosTND", "pnpNivel2", "ppCambios"];
+
+function passesDiaFilter(periodo, dia) {
+  if (dia === "todos") return true;
+  const weekend = isWeekendDate(periodo);
+  return dia === "finde" ? weekend : !weekend;
+}
+
+function getFilteredRows() {
+  const { desde, hasta, areas, lineas, turno, dia } = state.filters;
+  if (!desde || !hasta) return [];
+  const hastaEnd = new Date(hasta.getTime() + 86399999);
+  const base = state.productRows.filter(r =>
+    r.periodo >= desde && r.periodo <= hastaEnd &&
+    areas.has(r.area) && lineas.has(r.linea) &&
+    passesDiaFilter(r.periodo, dia)
+  );
+  return applyTurnoFilter(base, turno, PR_TURNO_FIELDS);
+}
+
+function getFilteredCtRowsBase() {
+  const { desde, hasta, lineas, dia } = state.filters;
+  if (!desde || !hasta) return [];
+  const hastaEnd = new Date(hasta.getTime() + 86399999);
+  return state.ctRows.filter(r =>
+    r.periodo >= desde && r.periodo <= hastaEnd && lineas.has(r.linea) &&
+    passesDiaFilter(r.periodo, dia)
+  );
+}
+
+function getFilteredCtRows() {
+  const { turno } = state.filters;
+  return applyTurnoFilter(getFilteredCtRowsBase(), turno, CT_TURNO_FIELDS);
+}
+
+// Ventana inmediatamente anterior, del mismo número de días, con los mismos
+// filtros de Área/Línea/Turno/Día. Sirve para responder "¿voy mejor o peor que
+// el periodo pasado?", que el dashboard nunca contestaba: hasta ahora todo se
+// comparaba solo contra el estándar de Mapex, nunca contra el pasado reciente.
+function previousPeriodRange() {
+  const { desde, hasta } = state.filters;
+  if (!desde || !hasta) return null;
+  const spanMs = hasta.getTime() - desde.getTime() + 86400000; // inclusivo
+  return { desde: new Date(desde.getTime() - spanMs), hasta: new Date(desde.getTime() - 86400000) };
+}
+
+function getPreviousPeriodRows() {
+  const range = previousPeriodRange();
+  if (!range) return [];
+  const { areas, lineas, turno, dia } = state.filters;
+  const hastaEnd = new Date(range.hasta.getTime() + 86399999);
+  const base = state.productRows.filter(r =>
+    r.periodo >= range.desde && r.periodo <= hastaEnd &&
+    areas.has(r.area) && lineas.has(r.linea) &&
+    passesDiaFilter(r.periodo, dia)
+  );
+  return applyTurnoFilter(base, turno, PR_TURNO_FIELDS);
+}
+
+// Para el Histórico: mismo alcance (Área/Línea/Turno/Día) pero SIN limitar por
+// Desde/Hasta — usa todo el rango cargado, para poder comparar semana contra
+// semana aunque arriba solo tengas seleccionada una.
+function getScopedRows() {
+  const { areas, lineas, turno, dia } = state.filters;
+  const base = state.productRows.filter(r => areas.has(r.area) && lineas.has(r.linea) && passesDiaFilter(r.periodo, dia));
+  return applyTurnoFilter(base, turno, PR_TURNO_FIELDS);
+}
+
+function getScopedCtRows() {
+  const { lineas, turno, dia } = state.filters;
+  const base = state.ctRows.filter(r => lineas.has(r.linea) && passesDiaFilter(r.periodo, dia));
+  return applyTurnoFilter(base, turno, CT_TURNO_FIELDS);
+}
+
+/* ============================================================
+   6. AGREGACIONES
+   ============================================================ */
+
+function sum(arr, f) { return arr.reduce((s, x) => s + (f(x) || 0), 0); }
+
+function weightedMermaStdPct(rows) {
+  // El MMPP del denominador es de TODAS las filas de la selección, no solo las
+  // que tienen estándar definido — las que no tienen estándar aportan 0 al
+  // numerador (mermaStdKg) pero su MMPP sigue contando en el total. Antes se
+  // excluían también del denominador, lo que inflaba el % (confirmado contra
+  // el PDF de referencia: L16 daba 3,26% así vs el 2,36% real; con todo el
+  // MMPP en el denominador da 2,359%, coincide).
+  const mmpp = sum(rows, r => r.mmpp);
+  if (mmpp <= 0) return null;
+  const mermaStdKg = sum(rows, r => r.aplicaStd ? r.mmpp * (100 - r.rendimientoStd) / 100 : 0);
+  return mermaStdKg / mmpp * 100;
+}
+
+function weightedMermaRealPct(rows) {
+  // La merma real se calcula sobre TODO el MMPP procesado de la selección
+  // (igual que el indicador oficial), no solo sobre los artículos con
+  // estándar definido — el estándar (weightedMermaStdPct) sí se restringe
+  // a esos artículos, porque solo ahí existe una referencia para comparar.
+  const mmpp = sum(rows, r => r.mmpp);
+  if (mmpp <= 0) return null;
+  const mermaKg = sum(rows, r => r.mermaKg || 0);
+  return mermaKg / mmpp * 100;
+}
+
+function weightedSobrepesoPct(rows) {
+  const kg = sum(rows, r => r.kg);
+  if (kg <= 0) return null;
+  const sp = sum(rows, r => r.sobrepesoKg || 0);
+  return sp / kg * 100;
+}
+
+function meanDisponibilidad(rows) {
+  const vals = rows.map(r => r.disponibilidad).filter(v => v !== null && v !== undefined);
+  if (!vals.length) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+// Fracción del MMPP del grupo que tiene rendimiento estándar definido.
+// weightedMermaStdPct divide siempre entre TODO el MMPP (así lo hace Mapex, no
+// se toca), de modo que un grupo con casi ninguna OF con estándar da un
+// mermaStdPct ≈ 0 y una "desviación" que en realidad es la merma real entera.
+// Con esta cobertura, quien pinta el dato puede distinguir "cumple de sobra el
+// estándar" de "no hay estándar con el que comparar".
+const STD_COVERAGE_MIN = 0.5;
+function stdCoverage(rows) {
+  const total = sum(rows, r => r.mmpp);
+  if (total <= 0) return 0;
+  return sum(rows, r => r.aplicaStd ? r.mmpp : 0) / total;
+}
+
+function aggregateByLinea(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    if (!map.has(r.linea)) map.set(r.linea, { area: r.area, linea: r.linea, rows: [] });
+    map.get(r.linea).rows.push(r);
+  }
+  return [...map.values()].map(g => {
+    const mermaStdPct = weightedMermaStdPct(g.rows);
+    const mermaRealPct = weightedMermaRealPct(g.rows);
+    return {
+      area: g.area, linea: g.linea,
+      kg: sum(g.rows, r => r.kg), uds: sum(g.rows, r => r.udsCaja),
+      mmpp: sum(g.rows, r => r.mmpp),
+      mermaStdPct, mermaRealPct,
+      stdCoverage: stdCoverage(g.rows),
+      desviacionPct: (mermaStdPct !== null && mermaRealPct !== null) ? (mermaRealPct - mermaStdPct) : null,
+      sobrepesoPct: weightedSobrepesoPct(g.rows),
+      disponibilidad: meanDisponibilidad(g.rows),
+      n: g.rows.length
+    };
+  }).sort((a, b) => b.kg - a.kg);
+}
+
+function aggregateByArticulo(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const key = r.linea + "||" + r.producto;
+    if (!map.has(key)) map.set(key, { area: r.area, linea: r.linea, producto: r.producto, desc: r.desc, rows: [] });
+    map.get(key).rows.push(r);
+  }
+  return [...map.values()].map(g => {
+    const mermaStdPct = weightedMermaStdPct(g.rows);
+    const mermaRealPct = weightedMermaRealPct(g.rows);
+    return {
+      area: g.area, linea: g.linea, producto: g.producto, desc: g.desc,
+      kg: sum(g.rows, r => r.kg), uds: sum(g.rows, r => r.udsCaja),
+      mermaStdPct, mermaRealPct,
+      stdCoverage: stdCoverage(g.rows),
+      desviacionPct: (mermaStdPct !== null && mermaRealPct !== null) ? (mermaRealPct - mermaStdPct) : null,
+      sobrepesoPct: weightedSobrepesoPct(g.rows),
+      disponibilidad: meanDisponibilidad(g.rows)
+    };
+  });
+}
+
+/* ============================================================
+   7. RENDER — KPI TILES
+   ============================================================ */
+
+function deltaBadge(deltaPct) {
+  if (deltaPct === null || deltaPct === undefined || Number.isNaN(deltaPct)) return { cls: "neutral", text: "sin estándar" };
+  if (deltaPct <= 0) return { cls: "good", text: "▼ " + fmtPct(Math.abs(deltaPct)) + " bajo estándar" };
+  return { cls: "bad", text: "▲ " + fmtPct(deltaPct) + " sobre estándar" };
+}
+
+// Variación relativa contra el periodo anterior. `lowerIsBetter` invierte el
+// color: en merma o sobrepeso subir es malo, en producción subir es bueno.
+function trendBadge(now, before, lowerIsBetter, fmt) {
+  if (now === null || before === null || before === 0 || !Number.isFinite(before)) {
+    return { cls: "neutral", text: "sin periodo anterior" };
+  }
+  const diff = now - before;
+  const pct = (diff / Math.abs(before)) * 100;
+  if (Math.abs(pct) < 0.5) return { cls: "neutral", text: "= igual que el periodo anterior" };
+  const up = diff > 0;
+  const good = lowerIsBetter ? !up : up;
+  return {
+    cls: good ? "good" : "bad",
+    text: `${up ? "▲" : "▼"} ${fmt ? fmt(Math.abs(diff)) : Math.abs(pct).toFixed(1) + " %"} vs. periodo anterior`
+  };
+}
+
+// Semáforo de disponibilidad según los umbrales configurables (⚙).
+function dispStatus(disp) {
+  if (disp === null || disp === undefined || Number.isNaN(disp)) return "muted";
+  if (disp >= state.settings.dispOk) return "ok";
+  if (disp < state.settings.dispBad) return "bad";
+  return "warn";
+}
+
+function renderKpis(rows) {
+  const prev = getPreviousPeriodRows();
+  const kg = sum(rows, r => r.kg);
+  const uds = sum(rows, r => r.udsCaja);
+  const mermaReal = weightedMermaRealPct(rows);
+  const mermaStd = weightedMermaStdPct(rows);
+  const desviacion = (mermaReal !== null && mermaStd !== null) ? mermaReal - mermaStd : null;
+  const sobrepeso = weightedSobrepesoPct(rows);
+  const disp = meanDisponibilidad(rows);
+  const nOF = new Set(rows.map(r => r.of)).size;
+
+  const kgPrev = prev.length ? sum(prev, r => r.kg) : null;
+  const mermaPrev = prev.length ? weightedMermaRealPct(prev) : null;
+  const dispPrev = prev.length ? meanDisponibilidad(prev) : null;
+
+  // La merma se juzga contra el estándar de Mapex, no contra un umbral inventado:
+  // por encima del estándar es rojo, hasta 0,5 pp por debajo ámbar, mejor verde.
+  const mermaStatus = desviacion === null ? "muted"
+    : desviacion > state.settings.mermaPp ? "bad"
+    : desviacion > 0 ? "warn" : "ok";
+
+  const tiles = [
+    {
+      cls: "lead", label: "Producción", value: fmtKg(kg),
+      delta: trendBadge(kg, kgPrev, false, v => fmtKg(v)),
+      sub: `${fmtInt(uds)} uds · ${nOF} OF`
+    },
+    {
+      cls: mermaStatus, label: "Merma real", value: fmtPct(mermaReal), valueCls: mermaStatus,
+      delta: deltaBadge(desviacion),
+      sub: `estándar ${fmtPct(mermaStd)}`
+    },
+    {
+      cls: mermaStatus === "muted" ? "muted" : (desviacion > 0 ? "bad" : "ok"),
+      label: "Desviación merma",
+      value: desviacion === null ? "—" : (desviacion > 0 ? "+" : "") + fmtPct(desviacion),
+      sub: mermaPrev === null ? "vs. estándar Mapex" : trendBadge(mermaReal, mermaPrev, true, v => fmtPct(v)).text
+    },
+    {
+      cls: dispStatus(disp), label: "Disponibilidad", value: fmtPct(disp, 1), valueCls: dispStatus(disp),
+      hint: "Aproximada: media de la columna Disponibilidad (%) de Mapex por OF. Contrástala con tu reporte oficial antes de usarla como cifra de cierre.",
+      delta: trendBadge(disp, dispPrev, false, v => fmtPct(v, 1))
+    },
+    {
+      cls: "muted", label: "Sobrepeso", value: fmtPct(sobrepeso),
+      sub: "kg reales vs. peso teórico"
+    }
+  ];
+
+  document.getElementById("kpiRow").innerHTML = tiles.map(t => `
+    <div class="card stat-tile ${t.cls || ""}">
+      <div class="label">${t.label}${t.hint ? `<span class="hint-dot" title="${escapeHtml(t.hint)}">ⓘ</span>` : ""}</div>
+      <div class="value ${t.valueCls || ""}">${t.value}</div>
+      ${t.delta ? `<div class="delta ${t.delta.cls}">${t.delta.text}</div>` : ""}
+      ${t.sub ? `<div class="sub">${t.sub}</div>` : ""}
+    </div>
+  `).join("");
+}
+
+/* ============================================================
+   7.5 ALERTAS — "¿qué línea se me está yendo?"
+   ============================================================
+   El dashboard ya calculaba todo lo necesario (desviación de merma por línea,
+   minutos de paro por línea…), pero lo dejaba enterrado en tablas colapsadas:
+   había que ir a buscarlo. Aquí se invierte: las líneas problemáticas suben
+   solas a la primera pantalla, ordenadas por impacto, y cada una lleva de un
+   clic a la vista donde se ve su causa.
+
+   Qué reglas están activas y con qué umbral lo decide el usuario en ⚙
+   (state.settings.rules) — por defecto solo "paros/averías altos". */
+
+function computeAlerts(rows, ctRows) {
+  const s = state.settings;
+  const alerts = [];
+  const porLinea = aggregateByLinea(rows);
+  const kgPorLinea = new Map(porLinea.map(d => [d.linea, d]));
+
+  // --- Regla: paros / averías altos ---
+  if (s.rules.paros && ctRows.length) {
+    const byLinea = new Map();
+    for (const r of ctRows) {
+      if (!byLinea.has(r.linea)) byLinea.set(r.linea, { linea: r.linea, tTotal: 0, av: 0, aj: 0, cam: 0, otros: 0 });
+      const g = byLinea.get(r.linea);
+      g.tTotal += r.tiempoTotal;
+      g.av += (r.parosAV || 0) / 60;
+      g.aj += (r.parosAjustes || 0) / 60;
+      g.cam += (r.ppCambios || 0) / 60;
+      g.otros += ((r.ppNivel2 || 0) + (r.parosTND || 0) + (r.pnpNivel2 || 0)) / 60;
+    }
+    for (const g of byLinea.values()) {
+      const paroMin = g.av + g.aj + g.cam + g.otros;
+      // OJO con las unidades: en este export de Mapex "Tiempo Total" y todas las
+      // columnas de paro vienen en SEGUNDOS (comprobado contra los datos reales:
+      // un tramo con tiempoTotal=12898 dura exactamente 215 min, y la suma
+      // semanal por línea da 604.800 = 7×86.400). El resto del dashboard ya
+      // divide entre 60 para enseñar minutos; aquí igual.
+      const totalMin = g.tTotal / 60;
+      if (totalMin <= 0 || paroMin <= 0) continue;
+      const paroPct = paroMin / totalMin * 100;
+      if (paroPct < s.paroPct) continue;
+      // El motivo dominante es lo primero que un jefe de planta quiere saber:
+      // no es lo mismo perder 400 min por avería que por cambios de formato.
+      const motivos = [["avería", g.av], ["ajustes", g.aj], ["cambios", g.cam], ["otros", g.otros]]
+        .sort((a, b) => b[1] - a[1]);
+      const top = motivos[0];
+      alerts.push({
+        rule: "paros",
+        severity: paroPct >= s.paroPct * 1.5 ? "critical" : "warning",
+        linea: g.linea,
+        tag: "Paros",
+        title: g.linea,
+        detail: `${fmtInt(paroMin)} min parada · sobre todo ${top[0]} (${fmtInt(top[1])} min) · ${fmtInt(totalMin)} min registrados`,
+        metric: fmtPct(paroPct, 1),
+        impact: paroMin,
+        goTo: "paros"
+      });
+    }
+  }
+
+  // --- Regla: merma real por encima del estándar ---
+  if (s.rules.merma) {
+    // Mismo criterio de cobertura que usa la tabla (STD_COVERAGE_MIN): sin
+    // estándar suficiente no hay desviación que alertar, solo merma sin
+    // referencia. Así alertas y tablas nunca se contradicen.
+    for (const d of porLinea) {
+      if (d.stdCoverage < STD_COVERAGE_MIN) continue;
+      if (d.desviacionPct === null || d.desviacionPct <= s.mermaPp) continue;
+      // Ordenar por kg de MMPP perdidos y no por %: una línea grande con +1 pp
+      // cuesta mucho más dinero que una pequeña con +5 pp.
+      const kgPerdidos = d.mmpp * (d.desviacionPct / 100);
+      alerts.push({
+        rule: "merma",
+        severity: d.desviacionPct >= s.mermaPp * 3 ? "critical" : "warning",
+        linea: d.linea,
+        tag: "Merma",
+        title: d.linea,
+        detail: `${fmtPct(d.mermaRealPct)} real vs. ${fmtPct(d.mermaStdPct)} estándar · ≈${fmtKg(kgPerdidos)} de más sobre ${fmtKg(d.mmpp)} de MMPP`,
+        metric: "+" + fmtPct(d.desviacionPct),
+        impact: kgPerdidos,
+        goTo: "lineas"
+      });
+    }
+  }
+
+  // --- Regla: disponibilidad por debajo del umbral ---
+  if (s.rules.disponibilidad) {
+    for (const d of porLinea) {
+      if (d.disponibilidad === null || d.disponibilidad >= s.dispBad) continue;
+      alerts.push({
+        rule: "disponibilidad",
+        severity: d.disponibilidad < s.dispBad * 0.75 ? "critical" : "warning",
+        linea: d.linea,
+        tag: "Disponib.",
+        title: d.linea,
+        detail: `Disponibilidad ${fmtPct(d.disponibilidad, 1)} (umbral ${s.dispBad} %) · ${fmtKg(d.kg)} producidos`,
+        metric: fmtPct(d.disponibilidad, 1),
+        impact: d.kg,
+        goTo: "paros"
+      });
+    }
+  }
+
+  // --- Regla: empeora respecto al periodo anterior ---
+  if (s.rules.caida) {
+    const prevPorLinea = new Map(aggregateByLinea(getPreviousPeriodRows()).map(d => [d.linea, d]));
+    for (const d of porLinea) {
+      const p = prevPorLinea.get(d.linea);
+      if (!p || d.mermaRealPct === null || p.mermaRealPct === null) continue;
+      const empeora = d.mermaRealPct - p.mermaRealPct;
+      if (empeora < s.mermaPp) continue;
+      alerts.push({
+        rule: "caida",
+        severity: "warning",
+        linea: d.linea,
+        tag: "Tendencia",
+        title: d.linea,
+        detail: `Merma ${fmtPct(p.mermaRealPct)} → ${fmtPct(d.mermaRealPct)} respecto al periodo anterior`,
+        metric: "+" + fmtPct(empeora),
+        impact: d.mmpp * (empeora / 100),
+        goTo: "historico"
+      });
+    }
+  }
+
+  const sevRank = { critical: 0, warning: 1 };
+  return alerts.sort((a, b) => (sevRank[a.severity] - sevRank[b.severity]) || (b.impact - a.impact));
+}
+
+// Al pulsar una alerta se acota el alcance a esa línea y se salta a la vista
+// donde está su causa — de "algo va mal" a "esto es lo que pasa" en un clic.
+function focusLinea(linea, tab) {
+  state.filters.lineas = new Set([linea]);
+  const area = (state.productRows.find(r => r.linea === linea) || state.ctRows.find(r => r.linea === linea) || {}).area;
+  if (area) state.filters.areas = new Set([area]);
+  renderFilters();
+  renderAll();
+  setTab(tab);
+}
+
+function renderAlertas(rows, ctRows) {
+  const alerts = computeAlerts(rows, ctRows);
+  const el = document.getElementById("alertList");
+  const badge = document.getElementById("tabBadgeAlertas");
+  const activas = Object.entries(state.settings.rules).filter(([, on]) => on).map(([k]) => RULE_LABELS[k]);
+
+  badge.hidden = alerts.length === 0;
+  badge.textContent = alerts.length;
+  document.getElementById("alertasSub").textContent = alerts.length
+    ? `${alerts.length} ${alerts.length === 1 ? "aviso" : "avisos"} en la selección`
+    : "";
+
+  if (!activas.length) {
+    el.innerHTML = `<div class="alert-empty">No hay ninguna regla de alerta activa.<br>Actívalas en <strong style="display:inline;font-size:12.5px;">⚙ Umbrales</strong>.</div>`;
+    return;
+  }
+  if (!alerts.length) {
+    el.innerHTML = `<div class="alert-empty"><strong>Sin incidencias</strong>Ninguna línea supera los umbrales de: ${escapeHtml(activas.join(", ").toLowerCase())}.</div>`;
+    return;
+  }
+
+  el.innerHTML = alerts.slice(0, 40).map((a, i) => `
+    <button class="alert-item sev-${a.severity}" data-i="${i}" title="Ver ${escapeHtml(a.linea)} en detalle">
+      <div class="a-main">
+        <div class="a-title"><span class="tag">${escapeHtml(a.tag)}</span>${escapeHtml(a.title)}</div>
+        <div class="a-detail">${escapeHtml(a.detail)}</div>
+      </div>
+      <div class="a-metric">${a.metric}</div>
+      <div class="a-go">›</div>
+    </button>
+  `).join("");
+
+  el.querySelectorAll(".alert-item").forEach(btn => {
+    const a = alerts[+btn.dataset.i];
+    btn.addEventListener("click", () => focusLinea(a.linea, a.goTo));
+  });
+}
+
+/* ============================================================
+   8. RENDER — GRÁFICOS SVG (sin dependencias externas)
+   ============================================================ */
+
+const tooltipEl = document.getElementById("tooltip");
+function showTooltip(html, evt) {
+  tooltipEl.innerHTML = html;
+  tooltipEl.style.opacity = "1";
+  tooltipEl.style.left = (evt.clientX + 14) + "px";
+  tooltipEl.style.top = (evt.clientY + 14) + "px";
+}
+function hideTooltip() { tooltipEl.style.opacity = "0"; }
+
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function renderBarChart(containerId, title, sub, items, opts = {}) {
+  const container = document.getElementById(containerId);
+  if (!items.length) { container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p><p class="empty-note">Sin datos para la selección.</p>`; return; }
+  const top = items.slice(0, opts.limit || 10);
+  const w = 560, barH = 22, gap = 10, leftPad = opts.leftPad || 160, rightPad = 60, topPad = 6;
+  const h = topPad + top.length * (barH + gap);
+  const maxVal = Math.max(...top.map(d => d.value), 0.0001);
+  const scaleW = w - leftPad - rightPad;
+  const color = opts.color || cssVar("--s1");
+
+  let bars = "";
+  top.forEach((d, i) => {
+    const y = topPad + i * (barH + gap);
+    const bw = Math.max(2, (d.value / maxVal) * scaleW);
+    bars += `
+      <text x="${leftPad - 8}" y="${y + barH / 2 + 4}" text-anchor="end" class="bar-label">${escapeHtml(truncate(d.label, 26))}</text>
+      <rect data-i="${i}" x="${leftPad}" y="${y}" width="${bw}" height="${barH}" rx="4" fill="${color}" style="cursor:pointer;"></rect>
+      <text x="${leftPad + bw + 8}" y="${y + barH / 2 + 4}" class="bar-value">${opts.formatValue ? opts.formatValue(d.value) : d.value}</text>
+    `;
+  });
+
+  container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">${bars}</svg>`;
+
+  const svg = container.querySelector("svg");
+  svg.querySelectorAll("rect").forEach(rect => {
+    const d = top[+rect.dataset.i];
+    rect.addEventListener("mousemove", evt => showTooltip(`<strong>${escapeHtml(d.label)}</strong><br>${opts.tooltip ? opts.tooltip(d) : (opts.formatValue ? opts.formatValue(d.value) : d.value)}`, evt));
+    rect.addEventListener("mouseleave", hideTooltip);
+  });
+}
+
+function renderStackedBarChart(containerId, title, sub, items, legend, opts = {}) {
+  const container = document.getElementById(containerId);
+  if (!items.length) { container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p><p class="empty-note">Sin datos para la selección.</p>`; return; }
+  const top = items.slice(0, opts.limit || 20);
+  const w = 640, barH = 22, gap = 12, leftPad = opts.leftPad || 110, rightPad = 70, topPad = 6, segGap = 2;
+  const h = topPad + top.length * (barH + gap);
+  const maxVal = Math.max(...top.map(d => d.segments.reduce((s, x) => s + x.value, 0)), 0.0001);
+  const scaleW = w - leftPad - rightPad;
+
+  let bars = "";
+  top.forEach((d, i) => {
+    const y = topPad + i * (barH + gap);
+    const total = d.segments.reduce((s, x) => s + x.value, 0);
+    const visible = d.segments.filter(s => s.value > 0);
+    let x = leftPad;
+    visible.forEach((seg, si) => {
+      const rawW = (seg.value / maxVal) * scaleW;
+      const segW = Math.max(1, rawW - (si < visible.length - 1 ? segGap : 0));
+      bars += `<rect data-i="${i}" data-seg="${si}" x="${x}" y="${y}" width="${segW}" height="${barH}" rx="3" fill="${seg.color}" style="cursor:pointer;"></rect>`;
+      x += segW + segGap;
+    });
+    bars += `<text x="${leftPad - 8}" y="${y + barH / 2 + 4}" text-anchor="end" class="bar-label">${escapeHtml(truncate(d.label, 18))}</text>`;
+    bars += `<text x="${leftPad + scaleW * (total / maxVal) + 8}" y="${y + barH / 2 + 4}" class="bar-value">${opts.formatValue ? opts.formatValue(total) : total}</text>`;
+  });
+
+  const legendHtml = `<div class="legend">${legend.map(l => `<span class="item"><span class="dot" style="background:${l.color}"></span>${escapeHtml(l.label)}</span>`).join("")}</div>`;
+
+  container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">${bars}</svg>${legendHtml}`;
+
+  const svg = container.querySelector("svg");
+  svg.querySelectorAll("rect").forEach(rect => {
+    const d = top[+rect.dataset.i];
+    const seg = d.segments.filter(s => s.value > 0)[+rect.dataset.seg];
+    rect.addEventListener("mousemove", evt => showTooltip(`<strong>${escapeHtml(d.label)}</strong><br>${escapeHtml(seg.label)}: ${opts.formatValue ? opts.formatValue(seg.value) : seg.value}`, evt));
+    rect.addEventListener("mouseleave", hideTooltip);
+  });
+}
+
+function renderColumnChart(containerId, title, sub, items, opts = {}) {
+  const container = document.getElementById(containerId);
+  if (!items.length) { container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p><p class="empty-note">Sin datos.</p>`; return; }
+  const w = 380, h = 190, padL = 40, padR = 10, padT = 10, padB = 30;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const n = items.length;
+  const gap = 4;
+  const barW = Math.max(2, Math.min(opts.maxBarWidth || 34, (plotW - gap * (n - 1)) / n));
+  const totalBarsW = barW * n + gap * (n - 1);
+  const offsetX = padL + Math.max(0, (plotW - totalBarsW) / 2);
+  const maxVal = Math.max(...items.map(d => d.value), 0.0001) * 1.12;
+  const yScale = v => padT + (1 - v / maxVal) * plotH;
+  const color = opts.color || cssVar("--s1");
+  const showLabels = n <= 6;
+
+  let grid = "";
+  const ticks = 3;
+  for (let i = 0; i <= ticks; i++) {
+    const val = maxVal * (i / ticks);
+    const y = yScale(val);
+    grid += `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="${cssVar("--grid")}" stroke-width="1"></line>`;
+  }
+  grid += `<line x1="${padL}" y1="${padT + plotH}" x2="${w - padR}" y2="${padT + plotH}" stroke="${cssVar("--baseline")}" stroke-width="1"></line>`;
+
+  let bars = "";
+  items.forEach((d, i) => {
+    const x = offsetX + i * (barW + gap);
+    const y = yScale(d.value);
+    const bh = Math.max(1, padT + plotH - y);
+    bars += `<rect data-i="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${color}" style="cursor:pointer;"></rect>`;
+    if (showLabels) {
+      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" class="col-value">${opts.formatValue ? opts.formatValue(d.value) : d.value}</text>`;
+    }
+    const skip = n > 9 && i % Math.ceil(n / 9) !== 0;
+    if (!skip) {
+      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${h - padB + 14}" text-anchor="middle" class="axis-text">${escapeHtml(d.label)}</text>`;
+    }
+  });
+
+  container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">${grid}${bars}</svg>`;
+
+  const svg = container.querySelector("svg");
+  svg.querySelectorAll("rect").forEach(rect => {
+    const d = items[+rect.dataset.i];
+    if (opts.onClick) rect.style.cursor = "pointer";
+    rect.addEventListener("mousemove", evt => showTooltip(`<strong>${escapeHtml(d.label)}</strong><br>${opts.formatValue ? opts.formatValue(d.value) : d.value}${opts.onClick ? "<br><em>clic para ver el detalle</em>" : ""}`, evt));
+    rect.addEventListener("mouseleave", hideTooltip);
+    if (opts.onClick) rect.addEventListener("click", () => opts.onClick(d));
+  });
+}
+
+function renderLineChart(containerId, title, sub, series, opts = {}) {
+  const container = document.getElementById(containerId);
+  const allPoints = series.flatMap(s => s.points);
+  if (!allPoints.length) { container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p><p class="empty-note">Sin datos para la selección.</p>`; return; }
+
+  const w = 560, h = 220, padL = 44, padR = 16, padT = 14, padB = 28;
+  const xs = [...new Set(allPoints.map(p => p.x))].sort((a, b) => a - b);
+  const yVals = allPoints.map(p => p.y);
+  const yMax = Math.max(...yVals, 0.0001) * 1.15;
+  const yMin = Math.min(0, Math.min(...yVals));
+  const xScale = x => padL + (xs.length <= 1 ? 0 : (xs.indexOf(x) / (xs.length - 1)) * (w - padL - padR));
+  const yScale = y => padT + (1 - (y - yMin) / (yMax - yMin || 1)) * (h - padT - padB);
+
+  let grid = "";
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const val = yMin + (yMax - yMin) * (i / ticks);
+    const y = yScale(val);
+    grid += `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="${cssVar("--grid")}" stroke-width="1"></line>
+              <text x="${padL - 6}" y="${y + 3}" text-anchor="end" class="axis-text">${opts.formatY ? opts.formatY(val) : val.toFixed(1)}</text>`;
+  }
+  let xlabels = "";
+  xs.forEach((x, i) => {
+    if (xs.length > 10 && i % Math.ceil(xs.length / 8) !== 0) return;
+    xlabels += `<text x="${xScale(x)}" y="${h - padB + 16}" text-anchor="middle" class="axis-text">${opts.formatX ? opts.formatX(x) : x}</text>`;
+  });
+
+  let lines = "", dots = "";
+  series.forEach((s, si) => {
+    const pts = s.points.slice().sort((a, b) => xs.indexOf(a.x) - xs.indexOf(b.x));
+    const path = pts.map((p, i) => (i === 0 ? "M" : "L") + xScale(p.x).toFixed(1) + "," + yScale(p.y).toFixed(1)).join(" ");
+    lines += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>`;
+    pts.forEach(p => {
+      dots += `<circle data-serie="${si}" cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="4" fill="${s.color}" stroke="${cssVar("--surface-1")}" stroke-width="2" style="cursor:pointer;" data-x="${p.x}" data-y="${p.y}"></circle>`;
+    });
+  });
+
+  const legend = series.length > 1 ? `<div class="legend">${series.map(s => `<span class="item"><span class="dot" style="background:${s.color}"></span>${escapeHtml(s.label)}</span>`).join("")}</div>` : "";
+
+  container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">${grid}${xlabels}${lines}${dots}</svg>${legend}`;
+
+  const svg = container.querySelector("svg");
+  svg.querySelectorAll("circle").forEach(dot => {
+    const si = +dot.dataset.serie;
+    const s = series[si];
+    dot.addEventListener("mousemove", evt => showTooltip(`<strong>${escapeHtml(s.label)}</strong><br>${opts.formatX ? opts.formatX(+dot.dataset.x) : dot.dataset.x}: ${opts.formatY ? opts.formatY(+dot.dataset.y) : dot.dataset.y}`, evt));
+    dot.addEventListener("mouseleave", hideTooltip);
+  });
+}
+
+function truncate(s, n) { return s && s.length > n ? s.slice(0, n - 1) + "…" : (s || ""); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+/* ============================================================
+   9. RENDER — TABLAS
+   ============================================================ */
+
+// Sin cobertura de estándar suficiente, "desviación" no significa nada: sería
+// la merma real entera disfrazada de desvío (un ▲39,59 % en rojo donde en
+// realidad no hay estándar). En ese caso se dice, y no se pinta semáforo.
+function mermaCellHtml(realPct, stdPct, desvPct, coverage) {
+  if (realPct === null) return `<td>—</td><td>—</td><td>—</td>`;
+  const sinStd = coverage !== undefined && coverage < STD_COVERAGE_MIN;
+  const badge = (desvPct === null || sinStd)
+    ? `<span class="pill neutral" title="${sinStd ? "Menos de la mitad del MMPP de esta selección tiene rendimiento estándar definido en Mapex" : "Sin estándar definido"}">sin estándar</span>`
+    : desvPct <= 0
+      ? `<span class="pill good">▼ ${fmtPct(Math.abs(desvPct))}</span>`
+      : `<span class="pill bad">▲ ${fmtPct(desvPct)}</span>`;
+  return `<td>${fmtPct(realPct)}</td><td>${(stdPct === null || sinStd) ? "—" : fmtPct(stdPct)}</td><td>${badge}</td>`;
+}
+
+function renderTableLinea(data) {
+  const el = document.getElementById("tableLinea");
+  setCount("countLinea", data.length ? `${data.length} líneas` : "");
+  if (!data.length) { el.innerHTML = `<div class="empty-note">Sin datos para la selección.</div>`; return; }
+  const totalKg = sum(data, d => d.kg), totalUds = sum(data, d => d.uds);
+  const rows = data.map(d => `
+    <tr>
+      <td>${escapeHtml(d.area)}</td>
+      <td>${escapeHtml(d.linea)}</td>
+      <td>${fmtInt(d.uds)}</td>
+      <td>${fmtKg(d.kg)}</td>
+      ${mermaCellHtml(d.mermaRealPct, d.mermaStdPct, d.desviacionPct, d.stdCoverage)}
+      <td>${d.sobrepesoPct === null ? "—" : fmtPct(d.sobrepesoPct)}</td>
+      <td>${d.disponibilidad === null ? "—" : fmtPct(d.disponibilidad, 1)}</td>
+    </tr>`).join("");
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Área</th><th>Línea</th><th>Uds.</th><th>Kg</th>
+      <th>Merma real</th><th>Merma std</th><th>Desviación</th><th>Sobrepeso</th><th>Disponib.</th>
+    </tr></thead>
+    <tbody>${rows}
+      <tr class="total-row"><td>—</td><td>TOTAL</td><td>${fmtInt(totalUds)}</td><td>${fmtKg(totalKg)}</td><td colspan="5"></td></tr>
+    </tbody></table>`;
+}
+
+function renderTableArticulo(data) {
+  const el = document.getElementById("tableArticulo");
+  const search = (document.getElementById("searchDetalle").value || "").toLowerCase();
+  let filtered = data.filter(d => !search || d.producto.toLowerCase().includes(search) || d.desc.toLowerCase().includes(search));
+  setCount("countArticulo", filtered.length ? `${filtered.length} artículos` : "");
+
+  const { col, dir } = state.sort;
+  const key = {
+    kg: d => d.kg, uds: d => d.uds, merma: d => (d.mermaRealPct ?? -Infinity),
+    desviacion: d => (d.desviacionPct ?? -Infinity), sobrepeso: d => (d.sobrepesoPct ?? -Infinity)
+  }[col];
+  if (key) filtered = filtered.slice().sort((a, b) => (key(a) - key(b)) * (dir === "asc" ? 1 : -1));
+
+  if (!filtered.length) { el.innerHTML = `<div class="empty-note">Sin resultados.</div>`; return; }
+
+  const rows = filtered.slice(0, 300).map(d => `
+    <tr class="row-clickable" data-producto="${escapeHtml(d.producto)}" title="Ver detalle por OF de este artículo">
+      <td>${escapeHtml(d.linea)}</td>
+      <td>${escapeHtml(d.producto)}</td>
+      <td>${escapeHtml(truncate(d.desc, 42))}</td>
+      <td>${fmtInt(d.uds)}</td>
+      <td>${fmtKg(d.kg)}</td>
+      ${mermaCellHtml(d.mermaRealPct, d.mermaStdPct, d.desviacionPct, d.stdCoverage)}
+      <td>${d.sobrepesoPct === null ? "—" : fmtPct(d.sobrepesoPct)}</td>
+    </tr>`).join("");
+
+  const dirIndicator = c => state.sort.col === c ? (state.sort.dir === "asc" ? "▲" : "▼") : "";
+
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Línea</th><th>Artículo</th><th>Descripción</th>
+      <th data-col="uds">Uds. ${dirIndicator("uds")}</th>
+      <th data-col="kg">Kg ${dirIndicator("kg")}</th>
+      <th data-col="merma">Merma real ${dirIndicator("merma")}</th>
+      <th>Merma std</th>
+      <th data-col="desviacion">Desviación ${dirIndicator("desviacion")}</th>
+      <th data-col="sobrepeso">Sobrepeso ${dirIndicator("sobrepeso")}</th>
+    </tr></thead>
+    <tbody>${rows}</tbody></table>
+    ${filtered.length > 300 ? `<p class="hint" style="padding:8px 10px;">Mostrando 300 de ${filtered.length} artículos. Afina la búsqueda o los filtros.</p>` : ""}`;
+
+  el.querySelectorAll("th[data-col]").forEach(th => {
+    th.addEventListener("click", () => {
+      const c = th.dataset.col;
+      if (state.sort.col === c) state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+      else { state.sort.col = c; state.sort.dir = "desc"; }
+      renderTableArticulo(data);
+    });
+  });
+  el.querySelectorAll("tr[data-producto]").forEach(tr => {
+    tr.addEventListener("click", () => {
+      // Clic en un artículo -> mismo buscador, sub-tabla de OF/tramos. No hay
+      // que volver a teclear el código: es el mismo campo de búsqueda.
+      document.getElementById("searchDetalle").value = tr.dataset.producto;
+      renderAll();
+      setDetalleSub("of");
+    });
+  });
+}
+
+function renderTableOF(rows) {
+  const el = document.getElementById("tableOF");
+  setCount("countOF", rows.length ? `${rows.length} OF` : "");
+  const search = (document.getElementById("searchDetalle").value || "").toLowerCase();
+  let filtered = rows.filter(r => !search ||
+    r.of.toLowerCase().includes(search) ||
+    r.producto.toLowerCase().includes(search) ||
+    r.desc.toLowerCase().includes(search)
+  );
+
+  const { col, dir } = state.sortOF;
+  const key = {
+    periodo: r => r.periodo.getTime(), mmpp: r => r.mmpp, kg: r => r.kg, udsCaja: r => r.udsCaja,
+    mermaKg: r => (r.mermaKg ?? -Infinity), mermaPct: r => (r.mermaPct ?? -Infinity),
+    rendStd: r => (r.rendimientoStd ?? -Infinity),
+    desviacion: r => (r.aplicaStd && r.mermaPct !== null ? r.mermaPct - (100 - r.rendimientoStd) : -Infinity)
+  }[col];
+  if (key) filtered = filtered.slice().sort((a, b) => (key(a) - key(b)) * (dir === "asc" ? 1 : -1));
+
+  if (!search) {
+    el.innerHTML = `<div class="empty-note">Escribe un OF, artículo o descripción arriba para ver el detalle fila a fila (son ${rows.length.toLocaleString("es-ES")} filas en la selección actual, demasiadas para listarlas todas).</div>`;
+    return;
+  }
+  if (!filtered.length) { el.innerHTML = `<div class="empty-note">Sin resultados para "${escapeHtml(search)}".</div>`; return; }
+
+  const dirIndicator = c => state.sortOF.col === c ? (state.sortOF.dir === "asc" ? "▲" : "▼") : "";
+
+  const trows = filtered.slice(0, 300).map(r => {
+    const desvPct = (r.aplicaStd && r.mermaPct !== null) ? (r.mermaPct - (100 - r.rendimientoStd)) : null;
+    const badge = !r.aplicaStd || r.mermaPct === null
+      ? `<span class="pill neutral">sin estándar</span>`
+      : desvPct <= 0
+        ? `<span class="pill good">▼ ${fmtPct(Math.abs(desvPct))}</span>`
+        : `<span class="pill bad">▲ ${fmtPct(desvPct)}</span>`;
+    return `
+    <tr>
+      <td>${escapeHtml(r.of)}</td>
+      <td>${fmtDate(r.periodo)}</td>
+      <td>${escapeHtml(r.linea)}</td>
+      <td>${escapeHtml(r.producto)}</td>
+      <td>${escapeHtml(truncate(r.desc, 36))}</td>
+      <td>${fmtKg(r.mmpp)}</td>
+      <td>${fmtKg(r.kg)}</td>
+      <td>${fmtInt(r.udsCaja)}</td>
+      <td>${r.mermaKg === null ? "—" : fmtKg(r.mermaKg)}</td>
+      <td>${r.mermaPct === null ? "—" : fmtPct(r.mermaPct)}</td>
+      <td>${r.aplicaStd ? fmtPct(100 - r.rendimientoStd) : "—"}</td>
+      <td>${badge}</td>
+      <td>${r.disponibilidad === null ? "—" : fmtPct(r.disponibilidad, 1)}</td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>OF</th>
+      <th data-col="periodo">Fecha ${dirIndicator("periodo")}</th>
+      <th>Línea</th><th>Artículo</th><th>Descripción</th>
+      <th data-col="mmpp">MMPP ${dirIndicator("mmpp")}</th>
+      <th data-col="kg">Encajado kg ${dirIndicator("kg")}</th>
+      <th data-col="udsCaja">Encajado uds ${dirIndicator("udsCaja")}</th>
+      <th data-col="mermaKg">Merma Kg ${dirIndicator("mermaKg")}</th>
+      <th data-col="mermaPct">Merma % ${dirIndicator("mermaPct")}</th>
+      <th data-col="rendStd">Merma std % ${dirIndicator("rendStd")}</th>
+      <th data-col="desviacion">Desviación ${dirIndicator("desviacion")}</th>
+      <th>Disponib.</th>
+    </tr></thead>
+    <tbody>${trows}</tbody></table>
+    ${filtered.length > 300 ? `<p class="hint" style="padding:8px 10px;">Mostrando 300 de ${filtered.length} OF. Afina la búsqueda.</p>` : `<p class="hint" style="padding:8px 10px;">${filtered.length} OF encontradas.</p>`}`;
+
+  el.querySelectorAll("th[data-col]").forEach(th => {
+    th.addEventListener("click", () => {
+      const c = th.dataset.col;
+      if (state.sortOF.col === c) state.sortOF.dir = state.sortOF.dir === "asc" ? "desc" : "asc";
+      else { state.sortOF.col = c; state.sortOF.dir = "desc"; }
+      renderTableOF(rows);
+    });
+  });
+}
+
+// Un único buscador para artículo, OF y tramos: se escribe una vez y filtra las
+// tres tablas a la vez, se esté viendo la que se esté viendo.
+document.getElementById("searchDetalle").addEventListener("input", () => renderAll(true));
+
+function setCount(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+/* ============================================================
+   10. PRODUCCIÓN POR TURNO Y PAROS (His_CT_Group) — opcional
+   ============================================================ */
+
+function aggregateTurnoPorLinea(ctRows) {
+  const map = new Map();
+  for (const r of ctRows) {
+    if (!r.turnoSplit || r.kg <= 0) continue;
+    if (!map.has(r.linea)) map.set(r.linea, { linea: r.linea, manana: 0, tarde: 0 });
+    const g = map.get(r.linea);
+    g.manana += r.kg * r.turnoSplit.manana;
+    g.tarde += r.kg * r.turnoSplit.tarde;
+  }
+  return [...map.values()].sort((a, b) => (b.manana + b.tarde) - (a.manana + a.tarde));
+}
+
+function renderProduccionTurno(ctRows) {
+  const data = aggregateTurnoPorLinea(ctRows);
+  const totalManana = sum(data, d => d.manana), totalTarde = sum(data, d => d.tarde);
+  const totalTodo = totalManana + totalTarde;
+
+  // Si no hay tramos en la selección actual pero sí hay His_CT_Group cargado en
+  // general, lo más probable es que el archivo de turnos no llegue a cubrir el
+  // rango de fechas elegido (p.ej. solo subiste turnos de los últimos meses,
+  // pero ProductReport sí tiene histórico de años anteriores). Se avisa explícito
+  // para no confundirlo con un fallo real.
+  const coverageNote = (!ctRows.length && state.ctRows.length && state.filters.desde && state.filters.hasta)
+    ? ` — sin filas de His_CT_Group para ${fmtDate(state.filters.desde)}–${fmtDate(state.filters.hasta)}; si el archivo de turnos no cubre este rango, es normal aunque sí haya producción`
+    : "";
+
+  const legend = [
+    { label: "Mañana (hasta 14h)", color: cssVar("--s1") },
+    { label: "Tarde (desde 14h)", color: cssVar("--s2") }
+  ];
+  renderStackedBarChart("chartProduccionTurno", "Producción por turno y línea",
+    `Total selección: ${fmtKg(totalManana)} mañana · ${fmtKg(totalTarde)} tarde${coverageNote}`,
+    data.map(d => ({
+      label: d.linea,
+      segments: [
+        { key: "manana", value: d.manana, color: legend[0].color, label: "Mañana" },
+        { key: "tarde", value: d.tarde, color: legend[1].color, label: "Tarde" }
+      ]
+    })),
+    legend,
+    { formatValue: v => fmtKg(v), limit: 25 }
+  );
+
+  const el = document.getElementById("tableTurno");
+  if (!data.length) { el.innerHTML = `<div class="empty-note">Sin datos para la selección.</div>`; return; }
+  const rows = data.map(d => {
+    const total = d.manana + d.tarde;
+    return `<tr>
+      <td>${escapeHtml(d.linea)}</td>
+      <td>${fmtKg(d.manana)}</td>
+      <td>${total > 0 ? fmtPct(d.manana / total * 100, 1) : "—"}</td>
+      <td>${fmtKg(d.tarde)}</td>
+      <td>${total > 0 ? fmtPct(d.tarde / total * 100, 1) : "—"}</td>
+      <td>${fmtKg(total)}</td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Línea</th><th>Kg Mañana</th><th>% Mañana</th><th>Kg Tarde</th><th>% Tarde</th><th>Total Kg</th>
+    </tr></thead>
+    <tbody>${rows}
+      <tr class="total-row">
+        <td>TOTAL</td>
+        <td>${fmtKg(totalManana)}</td><td>${totalTodo > 0 ? fmtPct(totalManana / totalTodo * 100, 1) : "—"}</td>
+        <td>${fmtKg(totalTarde)}</td><td>${totalTodo > 0 ? fmtPct(totalTarde / totalTodo * 100, 1) : "—"}</td>
+        <td>${fmtKg(totalTodo)}</td>
+      </tr>
+    </tbody></table>`;
+}
+
+// His_CT_Group no trae el número de OF (columnas "OF" y "Cod_OF" llegan vacías
+// de Mapex). Lo inferimos cruzando Línea+Artículo+Fecha contra ProductReport.csv,
+// que sí lo tiene. Solo lo mostramos cuando el cruce da una única OF posible —
+// si hay varias OFs con esa misma combinación ese día, lo marcamos como
+// ambiguo en vez de arriesgarnos a enseñar un número equivocado.
+function buildOfIndex() {
+  const map = new Map();
+  for (const r of state.productRows) {
+    if (!r.of) continue;
+    const key = r.linea + "||" + r.producto + "||" + r.periodo.getTime();
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key).add(r.of);
+  }
+  return map;
+}
+
+function resolveOf(r, ofIndex) {
+  if (r.of && r.of !== "--") return { text: r.of, ambiguous: false };
+  const key = r.linea + "||" + r.producto + "||" + r.periodo.getTime();
+  const ofSet = ofIndex.get(key);
+  if (!ofSet || ofSet.size === 0) return { text: "—", ambiguous: false };
+  if (ofSet.size === 1) return { text: [...ofSet][0], ambiguous: false };
+  return { text: ofSet.size + " posibles", ambiguous: true, options: [...ofSet] };
+}
+
+function renderTableTramo(ctRows) {
+  const el = document.getElementById("tableTramo");
+  const searchEl = document.getElementById("searchDetalle");
+  const search = (searchEl.value || "").toLowerCase();
+  const ofIndex = buildOfIndex();
+  let filtered = ctRows.filter(r => !search ||
+    resolveOf(r, ofIndex).text.toLowerCase().includes(search) ||
+    r.producto.toLowerCase().includes(search) ||
+    r.desc.toLowerCase().includes(search) ||
+    r.linea.toLowerCase().includes(search)
+  );
+  setCount("countTramo", filtered.length ? `${filtered.length} tramos` : "");
+
+  const { col, dir } = state.sortTramo;
+  const key = {
+    periodo: r => r.periodo.getTime(), ajustes: r => (r.parosAjustes || 0) / 60,
+    averias: r => (r.parosAV || 0) / 60, cambios: r => (r.ppCambios || 0) / 60,
+    total: r => ((r.parosAjustes || 0) + (r.parosAV || 0) + (r.ppCambios || 0) + (r.ppNivel2 || 0) + (r.parosTND || 0) + (r.pnpNivel2 || 0)) / 60,
+    disponibilidad: r => (r.disponibilidad ?? -Infinity)
+  }[col];
+  if (key) filtered = filtered.slice().sort((a, b) => (key(a) - key(b)) * (dir === "asc" ? 1 : -1));
+
+  if (!filtered.length) { el.innerHTML = `<div class="empty-note">Sin tramos para esta selección.</div>`; return; }
+
+  const dirIndicator = c => state.sortTramo.col === c ? (state.sortTramo.dir === "asc" ? "▲" : "▼") : "";
+
+  const trows = filtered.slice(0, 300).map(r => {
+    const ajustes = (r.parosAjustes || 0) / 60, averias = (r.parosAV || 0) / 60, cambios = (r.ppCambios || 0) / 60;
+    const total = ajustes + averias + cambios + (r.ppNivel2 || 0) / 60 + (r.parosTND || 0) / 60 + (r.pnpNivel2 || 0) / 60;
+    const ofInfo = resolveOf(r, ofIndex);
+    const ofCell = ofInfo.ambiguous
+      ? `<span class="pill neutral" title="OF posibles: ${escapeHtml(ofInfo.options.join(", "))}">${ofInfo.text}</span>`
+      : escapeHtml(ofInfo.text);
+    return `
+    <tr>
+      <td>${ofCell}</td>
+      <td>${fmtDate(r.periodo)}</td>
+      <td>${escapeHtml(r.linea)}</td>
+      <td>${escapeHtml(r.producto || "—")}</td>
+      <td>${escapeHtml(truncate(r.desc, 34))}</td>
+      <td>${r.horaInicio ? r.horaInicio.toISOString().slice(11, 16) : "—"}–${r.horaFin ? r.horaFin.toISOString().slice(11, 16) : "—"}</td>
+      <td>${fmtInt(ajustes)} min</td>
+      <td>${fmtInt(averias)} min</td>
+      <td>${fmtInt(cambios)} min</td>
+      <td>${fmtInt(total)} min</td>
+      <td>${r.disponibilidad === null ? "—" : fmtPct(r.disponibilidad, 1)}</td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>OF</th>
+      <th data-col="periodo">Fecha ${dirIndicator("periodo")}</th>
+      <th>Línea</th><th>Artículo</th><th>Descripción</th><th>Horario</th>
+      <th data-col="ajustes">Ajustes ${dirIndicator("ajustes")}</th>
+      <th data-col="averias">Averías ${dirIndicator("averias")}</th>
+      <th data-col="cambios">Cambios ${dirIndicator("cambios")}</th>
+      <th data-col="total">Total paro ${dirIndicator("total")}</th>
+      <th data-col="disponibilidad">Disponib. ${dirIndicator("disponibilidad")}</th>
+    </tr></thead>
+    <tbody>${trows}</tbody></table>
+    ${filtered.length > 300 ? `<p class="hint" style="padding:8px 10px;">Mostrando 300 de ${filtered.length} tramos. Afina la búsqueda o los filtros.</p>` : `<p class="hint" style="padding:8px 10px;">${filtered.length} tramos encontrados.</p>`}`;
+
+  el.querySelectorAll("th[data-col]").forEach(th => {
+    th.addEventListener("click", () => {
+      const c = th.dataset.col;
+      if (state.sortTramo.col === c) state.sortTramo.dir = state.sortTramo.dir === "asc" ? "desc" : "asc";
+      else { state.sortTramo.col = c; state.sortTramo.dir = "desc"; }
+      renderTableTramo(ctRows);
+    });
+  });
+}
+function renderParos(ctRows) {
+  // BUG: un "return" temprano aquí dejaba los gráficos de disponibilidad/Pareto
+  // con el contenido de la ÚLTIMA selección que sí tuvo datos — si cambiabas a un
+  // rango de fechas sin tramos (año anterior sin His_CT_Group cargado, etc.) los
+  // gráficos se quedaban mostrando cifras de otro periodo sin avisar. Se deja que
+  // sigan hasta los renderBarChart de abajo, que ya muestran "Sin datos" solos
+  // cuando el array de items está vacío.
+  const byLinea = new Map();
+  for (const r of ctRows) {
+    if (!byLinea.has(r.linea)) byLinea.set(r.linea, { linea: r.linea, tTotal: 0, tOp: 0, m: 0, disp: [], categorias: {} });
+    const g = byLinea.get(r.linea);
+    g.tTotal += r.tiempoTotal; g.tOp += r.tiempoOperativa; g.m += r.m;
+    if (r.disponibilidad !== null) g.disp.push(r.disponibilidad);
+    for (const cat of ["parosAjustes", "parosAV", "ppNivel2", "parosTND", "pnpNivel2", "ppCambios"]) {
+      g.categorias[cat] = (g.categorias[cat] || 0) + (r[cat] || 0);
+    }
+  }
+  const lineas = [...byLinea.values()];
+
+  renderBarChart("chartDisponibilidadTurnos", "Disponibilidad media por turno", "Media simple de la columna Disponibilidad (%) de His_CT_Group — orientativa",
+    lineas.map(l => ({ label: l.linea, value: l.disp.length ? l.disp.reduce((a, b) => a + b, 0) / l.disp.length : 0 }))
+      .sort((a, b) => b.value - a.value),
+    { formatValue: v => fmtPct(v, 1), color: cssVar("--s3") }
+  );
+
+  const catTotals = {};
+  for (const l of lineas) for (const [cat, val] of Object.entries(l.categorias)) catTotals[cat] = (catTotals[cat] || 0) + val;
+  const catLabels = {
+    parosAjustes: "Ajustes", parosAV: "Averías", ppNivel2: "PP Nivel 2",
+    parosTND: "TND", pnpNivel2: "PNP Nivel 2", ppCambios: "Cambios"
+  };
+  const paretoItems = Object.entries(catTotals).filter(([, v]) => v > 0).map(([k, v]) => ({ label: catLabels[k] || k, value: v / 60 })).sort((a, b) => b.value - a.value);
+
+  renderBarChart("chartParosPareto", "Paros por motivo (Pareto)", "Minutos acumulados en la selección actual, agrupado por línea (Paros Ajustes / Averías / Cambios de His_CT_Group)",
+    paretoItems, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s2") }
+  );
+}
+
+/* ============================================================
+   10.5 HISTÓRICO — comparativa por semana y por día
+   ============================================================ */
+
+function aggregateProductByPeriod(rows, keyFn, labelFn, orderFn) {
+  const map = new Map();
+  for (const r of rows) {
+    const key = keyFn(r);
+    if (!map.has(key)) map.set(key, { key, order: orderFn(r), label: labelFn(r), mmpp: 0, kg: 0, mermaKg: 0 });
+    const g = map.get(key);
+    g.mmpp += r.mmpp; g.kg += r.kg; g.mermaKg += r.mermaKg || 0;
+  }
+  return [...map.values()].sort((a, b) => a.order - b.order).map(g => ({
+    key: g.key, order: g.order, label: g.label, kg: g.kg,
+    mermaRealPct: g.mmpp > 0 ? g.mermaKg / g.mmpp * 100 : null
+  }));
+}
+
+function aggregateCtByPeriod(rows, keyFn, labelFn, orderFn) {
+  const map = new Map();
+  for (const r of rows) {
+    const key = keyFn(r);
+    if (!map.has(key)) map.set(key, { key, order: orderFn(r), label: labelFn(r), ajustes: 0, averias: 0, cambios: 0, ppNivel2: 0, parosTND: 0, pnpNivel2: 0 });
+    const g = map.get(key);
+    g.ajustes += r.parosAjustes || 0; g.averias += r.parosAV || 0; g.cambios += r.ppCambios || 0;
+    g.ppNivel2 += r.ppNivel2 || 0; g.parosTND += r.parosTND || 0; g.pnpNivel2 += r.pnpNivel2 || 0;
+  }
+  return [...map.values()].sort((a, b) => a.order - b.order).map(g => ({
+    key: g.key, order: g.order, label: g.label,
+    ajustes: g.ajustes / 60, averias: g.averias / 60, cambios: g.cambios / 60,
+    parosTotal: (g.ajustes + g.averias + g.cambios + g.ppNivel2 + g.parosTND + g.pnpNivel2) / 60
+  }));
+}
+
+// Construye el eje temporal unificado de un nivel (mes/semana/día): la unión
+// de los periodos que aparecen en producción y en tramos, ordenada. Así los
+// gráficos de paros/averías comparten exactamente el mismo eje que
+// producción/merma en vez de truncarse a solo los periodos con His_CT_Group
+// cargado (que puede cubrir menos meses que ProductReport).
+function buildPeriodTimeline(prItems, ctItems) {
+  const map = new Map();
+  for (const d of prItems) map.set(d.key, { key: d.key, order: d.order, label: d.label });
+  for (const d of ctItems) if (!map.has(d.key)) map.set(d.key, { key: d.key, order: d.order, label: d.label });
+  return [...map.values()].sort((a, b) => a.order - b.order);
+}
+
+const HIST_WINDOW = { mes: 12, semana: 13, dia: 20 };
+
+// offset=null significa "auto: muestra la ventana más reciente". Una vez el
+// usuario mueve el slider se guarda un offset explícito para ese nivel, que
+// se recalcula (clamp) contra la longitud actual del eje por si los filtros
+// cambian el total de periodos disponibles.
+function getHistOffset(level, timelineLen) {
+  const w = HIST_WINDOW[level];
+  const maxOffset = Math.max(0, timelineLen - w);
+  let off = state.ui.histOffset[level];
+  if (off === null || off === undefined || off > maxOffset) off = maxOffset;
+  return Math.max(0, Math.min(off, maxOffset));
+}
+
+// Junta producción+merma (ProductReport) y paros/averías/ajustes/cambios
+// (His_CT_Group) sobre el mismo eje temporal unificado y recorta a la
+// ventana visible actual de ese nivel (mes/semana/día).
+function buildLevelCharts(level, prItems, ctItems, hasCt) {
+  const timeline = buildPeriodTimeline(prItems, hasCt ? ctItems : []);
+  const offset = getHistOffset(level, timeline.length);
+  const visible = timeline.slice(offset, offset + HIST_WINDOW[level]);
+  const prByKey = new Map(prItems.map(d => [d.key, d]));
+  const ctByKey = new Map(ctItems.map(d => [d.key, d]));
+  return {
+    timeline,
+    prod: visible.map(t => ({ label: t.label, value: (prByKey.get(t.key) || {}).kg || 0, key: t.key })),
+    merma: visible.filter(t => (prByKey.get(t.key) || {}).mermaRealPct !== undefined && (prByKey.get(t.key) || {}).mermaRealPct !== null)
+      .map(t => ({ label: t.label, value: prByKey.get(t.key).mermaRealPct, key: t.key })),
+    paros: visible.map(t => ({ label: t.label, value: (ctByKey.get(t.key) || {}).parosTotal || 0, key: t.key })),
+    averias: visible.map(t => ({ label: t.label, value: (ctByKey.get(t.key) || {}).averias || 0, key: t.key })),
+    ajustes: visible.map(t => ({ label: t.label, value: (ctByKey.get(t.key) || {}).ajustes || 0, key: t.key })),
+    cambios: visible.map(t => ({ label: t.label, value: (ctByKey.get(t.key) || {}).cambios || 0, key: t.key }))
+  };
+}
+
+// Cada nivel tiene su propia ventana y su propio offset, pero ahora solo se ve
+// un nivel a la vez, así que basta un único slider: se guarda el eje completo de
+// cada nivel y se pinta el del nivel activo.
+const histTimelines = { mes: [], semana: [], dia: [] };
+
+function renderHistSliderActive() {
+  const level = state.ui.histLevel;
+  const el = document.getElementById("histSliderActive");
+  const timeline = histTimelines[level] || [];
+  const w = HIST_WINDOW[level];
+  if (!w || timeline.length <= w) { el.innerHTML = ""; return; }
+  const maxOffset = timeline.length - w;
+  const offset = getHistOffset(level, timeline.length);
+  const first = timeline[offset], last = timeline[Math.min(offset + w - 1, timeline.length - 1)];
+  el.innerHTML = `
+    <span class="hist-slider-label">${escapeHtml(first.label)} – ${escapeHtml(last.label)}</span>
+    <input type="range" min="0" max="${maxOffset}" step="1" value="${offset}" aria-label="Desplazar rango de tiempo">
+    <span class="hist-slider-label">${timeline.length} en total</span>
+  `;
+  el.querySelector("input[type=range]").addEventListener("input", e => {
+    state.ui.histOffset[level] = +e.target.value;
+    renderHistorico();
+  });
+}
+
+const fmtDayShort = d => d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+const fmtDayLong = d => d.toLocaleDateString("es-ES", { weekday: "long", day: "2-digit", month: "2-digit", timeZone: "UTC" });
+
+const MONTH_ABBR = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const MONTH_FULL = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+const monthKeyOf = d => d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+const monthLabelOf = d => MONTH_ABBR[d.getUTCMonth()] + " " + String(d.getUTCFullYear()).slice(2);
+const monthOrderOf = d => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+const monthTitleLabel = key => { const [y, m] = key.split("-").map(Number); return MONTH_FULL[m - 1] + " " + y; };
+
+// Drill-down mes -> semana -> día -> turno -> tramo. Con el selector de nivel,
+// bajar un escalón cambia de nivel visible en el sitio (antes había que hacer
+// scroll hasta el bloque siguiente): mismo recorrido, sin mover la pantalla.
+function drillToMonth(key) {
+  state.drill.monthKey = key;
+  state.drill.weekKey = null;
+  state.drill.dayKey = null;
+  state.ui.histOffset.semana = null;
+  state.ui.histOffset.dia = null;
+  renderHistorico();
+  setHistLevel("semana");
+}
+
+function drillToWeek(key) {
+  state.drill.weekKey = key;
+  state.drill.dayKey = null;
+  state.ui.histOffset.dia = null;
+  renderHistorico();
+  setHistLevel("dia");
+}
+
+function drillToDay(key) {
+  state.drill.dayKey = key;
+  renderHistorico();
+  setHistLevel("turno");
+}
+
+function drillToTurno(turno) {
+  // Punto final: fija los filtros globales (Desde=Hasta=ese día, Turno=el elegido)
+  // y salta a la pestaña de detalle para encontrar el tramo/OF exacto.
+  const day = new Date(state.drill.dayKey);
+  state.filters.desde = day;
+  state.filters.hasta = day;
+  state.filters.turno = turno;
+  state.drill.weekKey = null;
+  state.drill.dayKey = null;
+  renderFilters();
+  renderAll();
+  setTab("detalle");
+  setDetalleSub("of");
+  document.getElementById("searchDetalle").focus();
+}
+
+function renderHistBreadcrumb() {
+  const el = document.getElementById("histBreadcrumb");
+  const { monthKey, weekKey, dayKey } = state.drill;
+  if (!monthKey && !weekKey) { el.innerHTML = ""; return; }
+
+  let html = `<div class="hist-breadcrumb">`;
+  if (monthKey) {
+    html += `<button class="ghost" id="histBackAll">◀ Todos los meses</button>
+      <span>${escapeHtml(monthTitleLabel(monthKey))}</span>`;
+  } else {
+    html += `<button class="ghost" id="histBackAll">◀ Todas las semanas</button>`;
+  }
+  if (weekKey) {
+    const weekRow = state.productRows.find(r => r.semana.key === weekKey);
+    if (weekRow) {
+      const semana = weekRow.semana;
+      html += `<span>›</span><span>Semana ${semana.week} (${fmtDate(semana.monday)}–${fmtDate(semana.sunday)})</span>
+        <button class="ghost" id="histBackWeek">✕ quitar semana</button>`;
+    }
+  }
+  if (dayKey) {
+    html += `<span>›</span><span>${escapeHtml(fmtDayLong(new Date(dayKey)))}</span>
+      <button class="ghost" id="histBackDay">✕ quitar día</button>`;
+  }
+  html += `</div>`;
+  el.innerHTML = html;
+
+  document.getElementById("histBackAll").addEventListener("click", () => {
+    state.drill.monthKey = null; state.drill.weekKey = null; state.drill.dayKey = null;
+    state.ui.histOffset.semana = null; state.ui.histOffset.dia = null;
+    renderHistorico();
+  });
+  if (weekKey) {
+    document.getElementById("histBackWeek").addEventListener("click", () => {
+      state.drill.weekKey = null; state.drill.dayKey = null;
+      state.ui.histOffset.dia = null;
+      renderHistorico();
+    });
+  }
+  if (dayKey) {
+    document.getElementById("histBackDay").addEventListener("click", () => {
+      state.drill.dayKey = null;
+      renderHistorico();
+    });
+  }
+}
+
+function renderHistorico() {
+  const rowsAll = getScopedRows();
+  const hasCt = state.ctRows.length > 0;
+  const ctAll = hasCt ? getScopedCtRows() : [];
+
+  const CT_CARD_IDS = [
+    "chartHistParosMes", "chartHistAveriasMes", "chartHistAjustesMes", "chartHistCambiosMes",
+    "chartHistParosSemana", "chartHistAveriasSemana", "chartHistAjustesSemana", "chartHistCambiosSemana",
+    "chartHistParosDia", "chartHistAveriasDia", "chartHistAjustesDia", "chartHistCambiosDia"
+  ];
+  CT_CARD_IDS.forEach(id => { document.getElementById(id).closest(".card").hidden = !hasCt; });
+
+  // ---- Por mes: siempre todo lo cargado, clic para bajar a semana ----
+  const byMonth = aggregateProductByPeriod(rowsAll, r => monthKeyOf(r.periodo), r => monthLabelOf(r.periodo), r => monthOrderOf(r.periodo));
+  const ctByMonth = hasCt ? aggregateCtByPeriod(ctAll, r => monthKeyOf(r.periodo), r => monthLabelOf(r.periodo), r => monthOrderOf(r.periodo)) : [];
+  const mesCharts = buildLevelCharts("mes", byMonth, ctByMonth, hasCt);
+  histTimelines.mes = mesCharts.timeline;
+  renderColumnChart("chartHistProdMes", "Producción por mes", "Kg encajados — clic en una barra para ver ese mes por semana",
+    mesCharts.prod, { formatValue: v => fmtKg(v), color: cssVar("--s1"), onClick: d => drillToMonth(d.key) });
+  renderColumnChart("chartHistMermaMes", "Merma real por mes", "% sobre MMPP — clic para ver ese mes por semana",
+    mesCharts.merma, { formatValue: v => fmtPct(v), color: cssVar("--s8"), onClick: d => drillToMonth(d.key) });
+  if (hasCt) {
+    renderColumnChart("chartHistParosMes", "Paros totales por mes", "Ajustes+averías+cambios+otros — clic para bajar a semana",
+      mesCharts.paros, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s2"), onClick: d => drillToMonth(d.key) });
+    renderColumnChart("chartHistAveriasMes", "Averías por mes", "Minutos — clic para bajar a semana",
+      mesCharts.averias, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s8"), onClick: d => drillToMonth(d.key) });
+    renderColumnChart("chartHistAjustesMes", "Ajustes por mes", "Minutos — clic para bajar a semana",
+      mesCharts.ajustes, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s4"), onClick: d => drillToMonth(d.key) });
+    renderColumnChart("chartHistCambiosMes", "Cambios por mes", "Minutos — clic para bajar a semana",
+      mesCharts.cambios, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s7"), onClick: d => drillToMonth(d.key) });
+  }
+
+  // ---- Por semana: acotada al mes seleccionado (si hay uno), si no todas las cargadas ----
+  const weekScopeRows = state.drill.monthKey ? rowsAll.filter(r => monthKeyOf(r.periodo) === state.drill.monthKey) : rowsAll;
+  const weekScopeCt = state.drill.monthKey ? ctAll.filter(r => monthKeyOf(r.periodo) === state.drill.monthKey) : ctAll;
+
+  const byWeek = aggregateProductByPeriod(weekScopeRows, r => r.semana.key, r => "S" + r.semana.week, r => r.semana.monday.getTime());
+  const ctByWeek = hasCt ? aggregateCtByPeriod(weekScopeCt, r => r.semana.key, r => "S" + r.semana.week, r => r.semana.monday.getTime()) : [];
+  const semanaCharts = buildLevelCharts("semana", byWeek, ctByWeek, hasCt);
+  histTimelines.semana = semanaCharts.timeline;
+  renderColumnChart("chartHistProdSemana", "Producción por semana", "Kg encajados — clic en una barra para ver esa semana por día",
+    semanaCharts.prod, { formatValue: v => fmtKg(v), color: cssVar("--s1"), onClick: d => drillToWeek(d.key) });
+  renderColumnChart("chartHistMermaSemana", "Merma real por semana", "% sobre MMPP — clic para ver esa semana por día",
+    semanaCharts.merma, { formatValue: v => fmtPct(v), color: cssVar("--s8"), onClick: d => drillToWeek(d.key) });
+  if (hasCt) {
+    renderColumnChart("chartHistParosSemana", "Paros totales por semana", "Ajustes+averías+cambios+otros — clic para bajar a día",
+      semanaCharts.paros, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s2"), onClick: d => drillToWeek(d.key) });
+    renderColumnChart("chartHistAveriasSemana", "Averías por semana", "Minutos — clic para bajar a día",
+      semanaCharts.averias, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s8"), onClick: d => drillToWeek(d.key) });
+    renderColumnChart("chartHistAjustesSemana", "Ajustes por semana", "Minutos — clic para bajar a día",
+      semanaCharts.ajustes, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s4"), onClick: d => drillToWeek(d.key) });
+    renderColumnChart("chartHistCambiosSemana", "Cambios por semana", "Minutos — clic para bajar a día",
+      semanaCharts.cambios, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s7"), onClick: d => drillToWeek(d.key) });
+  }
+
+  renderHistBreadcrumb();
+
+  // ---- Por día: acotado a la semana seleccionada; si no hay semana pero sí mes, acotado al mes; si no, todo lo cargado ----
+  const dayScopeRows = state.drill.weekKey ? weekScopeRows.filter(r => r.semana.key === state.drill.weekKey) : weekScopeRows;
+  const dayScopeCt = state.drill.weekKey ? weekScopeCt.filter(r => r.semana.key === state.drill.weekKey) : weekScopeCt;
+  const weekNumMatch = state.drill.weekKey && state.drill.weekKey.match(/-W(\d+)/);
+
+  const byDay = aggregateProductByPeriod(dayScopeRows, r => r.periodo.getTime(), r => fmtDayShort(r.periodo), r => r.periodo.getTime());
+  const ctByDay = hasCt ? aggregateCtByPeriod(dayScopeCt, r => r.periodo.getTime(), r => fmtDayShort(r.periodo), r => r.periodo.getTime()) : [];
+  const diaCharts = buildLevelCharts("dia", byDay, ctByDay, hasCt);
+  histTimelines.dia = diaCharts.timeline;
+  renderColumnChart("chartHistProdDia", "Producción por día", "Kg encajados — clic para ver el reparto por turno",
+    diaCharts.prod, { formatValue: v => fmtKg(v), color: cssVar("--s1"), onClick: d => drillToDay(d.key) });
+  renderColumnChart("chartHistMermaDia", "Merma real por día", "% sobre MMPP — clic para ver el reparto por turno",
+    diaCharts.merma, { formatValue: v => fmtPct(v), color: cssVar("--s8"), onClick: d => drillToDay(d.key) });
+  if (hasCt) {
+    renderColumnChart("chartHistParosDia", "Paros totales por día", "Clic para ver el reparto por turno",
+      diaCharts.paros, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s2"), onClick: d => drillToDay(d.key) });
+    renderColumnChart("chartHistAveriasDia", "Averías por día", "Clic para ver el reparto por turno",
+      diaCharts.averias, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s8"), onClick: d => drillToDay(d.key) });
+    renderColumnChart("chartHistAjustesDia", "Ajustes por día", "Clic para ver el reparto por turno",
+      diaCharts.ajustes, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s4"), onClick: d => drillToDay(d.key) });
+    renderColumnChart("chartHistCambiosDia", "Cambios por día", "Clic para ver el reparto por turno",
+      diaCharts.cambios, { formatValue: v => fmtInt(v) + " min", color: cssVar("--s7"), onClick: d => drillToDay(d.key) });
+  }
+
+  // ---- Por turno: solo tiene sentido con un día seleccionado ----
+  // El nivel "Turno" del selector queda deshabilitado hasta que se hace drill a
+  // un día concreto; si se estaba viendo y se sale del día, se vuelve a "Día".
+  const turnoBtn = document.getElementById("histLevelTurno");
+  turnoBtn.disabled = !state.drill.dayKey;
+  turnoBtn.title = state.drill.dayKey
+    ? "Reparto Mañana/Tarde de " + fmtDayLong(new Date(state.drill.dayKey))
+    : "Selecciona un día para ver su reparto por turno";
+  renderHistSliderActive();
+  if (!state.drill.dayKey) {
+    if (state.ui.histLevel === "turno") setHistLevel("dia");
+    return;
+  }
+
+  const dayRows = dayScopeRows.filter(r => r.periodo.getTime() === state.drill.dayKey);
+  const acc = { manana: { mmpp: 0, kg: 0, mermaKg: 0 }, tarde: { mmpp: 0, kg: 0, mermaKg: 0 } };
+  for (const r of dayRows) {
+    const split = r.turnoSplit || { manana: 0, tarde: 0 };
+    acc.manana.kg += r.kg * split.manana; acc.manana.mmpp += r.mmpp * split.manana; acc.manana.mermaKg += (r.mermaKg || 0) * split.manana;
+    acc.tarde.kg += r.kg * split.tarde; acc.tarde.mmpp += r.mmpp * split.tarde; acc.tarde.mermaKg += (r.mermaKg || 0) * split.tarde;
+  }
+  renderColumnChart("chartHistProdTurno", "Producción por turno", "Kg encajados ese día — clic para ver los tramos",
+    [
+      { label: "Mañana", value: acc.manana.kg, turno: "manana" },
+      { label: "Tarde", value: acc.tarde.kg, turno: "tarde" }
+    ], { formatValue: v => fmtKg(v), color: cssVar("--s1"), maxBarWidth: 70, onClick: d => drillToTurno(d.turno) });
+  renderColumnChart("chartHistMermaTurno", "Merma real por turno", "% sobre MMPP ese día — clic para ver los tramos",
+    [
+      { label: "Mañana", value: acc.manana.mmpp > 0 ? acc.manana.mermaKg / acc.manana.mmpp * 100 : 0, turno: "manana" },
+      { label: "Tarde", value: acc.tarde.mmpp > 0 ? acc.tarde.mermaKg / acc.tarde.mmpp * 100 : 0, turno: "tarde" }
+    ], { formatValue: v => fmtPct(v), color: cssVar("--s8"), maxBarWidth: 70, onClick: d => drillToTurno(d.turno) });
+
+  ["chartHistParosTurno", "chartHistAveriasTurno", "chartHistAjustesTurno", "chartHistCambiosTurno"].forEach(id => {
+    document.getElementById(id).closest(".card").hidden = !hasCt;
+  });
+  if (!hasCt) return;
+
+  const dayCt = dayScopeCt.filter(r => r.periodo.getTime() === state.drill.dayKey);
+  const accCt = {
+    manana: { ajustes: 0, averias: 0, cambios: 0, otros: 0 },
+    tarde: { ajustes: 0, averias: 0, cambios: 0, otros: 0 }
+  };
+  for (const r of dayCt) {
+    const split = r.turnoSplit || { manana: 0, tarde: 0 };
+    const otros = (r.ppNivel2 || 0) + (r.parosTND || 0) + (r.pnpNivel2 || 0);
+    for (const [turno, frac] of [["manana", split.manana], ["tarde", split.tarde]]) {
+      accCt[turno].ajustes += (r.parosAjustes || 0) * frac / 60;
+      accCt[turno].averias += (r.parosAV || 0) * frac / 60;
+      accCt[turno].cambios += (r.ppCambios || 0) * frac / 60;
+      accCt[turno].otros += otros * frac / 60;
+    }
+  }
+  renderColumnChart("chartHistParosTurno", "Paros totales por turno", "Minutos ese día — clic para ver los tramos",
+    [
+      { label: "Mañana", value: accCt.manana.ajustes + accCt.manana.averias + accCt.manana.cambios + accCt.manana.otros, turno: "manana" },
+      { label: "Tarde", value: accCt.tarde.ajustes + accCt.tarde.averias + accCt.tarde.cambios + accCt.tarde.otros, turno: "tarde" }
+    ], { formatValue: v => fmtInt(v) + " min", color: cssVar("--s2"), maxBarWidth: 70, onClick: d => drillToTurno(d.turno) });
+  renderColumnChart("chartHistAveriasTurno", "Averías por turno", "Minutos ese día — clic para ver los tramos",
+    [
+      { label: "Mañana", value: accCt.manana.averias, turno: "manana" },
+      { label: "Tarde", value: accCt.tarde.averias, turno: "tarde" }
+    ], { formatValue: v => fmtInt(v) + " min", color: cssVar("--s8"), maxBarWidth: 70, onClick: d => drillToTurno(d.turno) });
+  renderColumnChart("chartHistAjustesTurno", "Ajustes por turno", "Minutos ese día — clic para ver los tramos",
+    [
+      { label: "Mañana", value: accCt.manana.ajustes, turno: "manana" },
+      { label: "Tarde", value: accCt.tarde.ajustes, turno: "tarde" }
+    ], { formatValue: v => fmtInt(v) + " min", color: cssVar("--s4"), maxBarWidth: 70, onClick: d => drillToTurno(d.turno) });
+  renderColumnChart("chartHistCambiosTurno", "Cambios por turno", "Minutos ese día — clic para ver los tramos",
+    [
+      { label: "Mañana", value: accCt.manana.cambios, turno: "manana" },
+      { label: "Tarde", value: accCt.tarde.cambios, turno: "tarde" }
+    ], { formatValue: v => fmtInt(v) + " min", color: cssVar("--s7"), maxBarWidth: 70, onClick: d => drillToTurno(d.turno) });
+}
+
+/* ============================================================
+   11. RENDER PRINCIPAL
+   ============================================================ */
+
+function renderAll(skipFilters) {
+  if (!state.productRows.length) return;
+  const rows = getFilteredRows();
+
+  renderKpis(rows);
+  renderHistorico();
+
+  const porArticulo = aggregateByArticulo(rows).sort((a, b) => b.kg - a.kg);
+  const porLinea = aggregateByLinea(rows);
+
+  renderBarChart("chartTopProduccion", "Top 10 producción", "Artículos con mayor peso encajado en la selección",
+    porArticulo.map(d => ({ label: d.producto + " · " + d.desc, value: d.kg })),
+    { formatValue: v => fmtKg(v), color: cssVar("--s1"), tooltip: () => "" }
+  );
+
+  const conMerma = porArticulo.filter(d => d.mermaRealPct !== null).sort((a, b) => b.mermaRealPct - a.mermaRealPct);
+  renderBarChart("chartTopMerma", "Top 10 merma real (%)", "Artículos con mayor merma real sobre MMPP (solo artículos con estándar definido)",
+    conMerma.map(d => ({ label: d.producto + " · " + d.desc, value: d.mermaRealPct })),
+    { formatValue: v => fmtPct(v), color: cssVar("--s8") }
+  );
+
+  const palette = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"];
+  const topLineas = porLinea.slice(0, 6).map(d => d.linea);
+  const byDayLinea = new Map();
+  for (const r of rows) {
+    if (!topLineas.includes(r.linea) || !r.aplicaStd) continue;
+    const dayKey = r.periodo.getTime();
+    const k = r.linea + "||" + dayKey;
+    if (!byDayLinea.has(k)) byDayLinea.set(k, { linea: r.linea, day: dayKey, mmpp: 0, mermaKg: 0 });
+    const g = byDayLinea.get(k);
+    g.mmpp += r.mmpp; g.mermaKg += r.mermaKg || 0;
+  }
+  const series = topLineas.map((linea, i) => ({
+    label: linea, color: cssVar(palette[i % palette.length]),
+    points: [...byDayLinea.values()].filter(g => g.linea === linea && g.mmpp > 0)
+      .map(g => ({ x: g.day, y: g.mermaKg / g.mmpp * 100 }))
+  })).filter(s => s.points.length);
+  renderLineChart("chartTendencia", "Tendencia diaria de merma real (%)", "Líneas con más producción en la selección (máx. 6), solo artículos con estándar",
+    series, { formatY: v => v.toFixed(1) + "%", formatX: x => new Date(x).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", timeZone: "UTC" }) }
+  );
+
+  renderTableLinea(porLinea);
+  renderTableArticulo(porArticulo);
+  renderTableOF(rows);
+
+  const ctFiltered = state.ctRows.length ? getFilteredCtRows() : [];
+  if (state.ctRows.length) {
+    // "Producción por turno" hace su propio reparto mañana/tarde, así que usa
+    // las filas sin filtrar por turno (si no, con el filtro global en "Tarde"
+    // reparte otra vez esa fracción y aparece un residuo de mañana que no
+    // existe). Paros/Disponibilidad sí respetan el filtro de turno normal.
+    renderProduccionTurno(getFilteredCtRowsBase());
+    renderParos(ctFiltered);
+    renderTableTramo(ctFiltered);
+  }
+
+  renderAlertas(rows, ctFiltered);
+  renderTopbarLabels();
+
+  const diag = document.getElementById("diag");
+  const turnoLabel = { ambos: "Ambos", manana: "Mañana", tarde: "Tarde" }[state.filters.turno];
+  const diaLabel = { todos: "Todos", laborables: "Laborables", finde: "Fin de semana" }[state.filters.dia];
+  diag.innerHTML = `<code>${state.productRows.length}</code> filas producto` +
+    (state.ctRows.length ? ` · <code>${state.ctRows.length}</code> tramos` : "") +
+    ` · <code>${rows.length}</code> en la selección` +
+    ` · Turno <code>${turnoLabel}</code> · Día <code>${diaLabel}</code>` +
+    (state.filters.turno !== "ambos" ? ` — kg/uds/merma prorrateados por el tiempo de cada OF en ese turno; los % no se prorratean` : "");
+}
+
+/* ============================================================
+   12. EXPORTAR INFORME (vista imprimible / Ctrl+P)
+   ============================================================ */
+
+// Nombre legible de una área: "N2_FILETEADOS" -> "Noel 2 · Fileteados"
+function areaDisplayName(area) {
+  const code = plantaCode(area);
+  const rest = (area || "").slice(code.length + 1).replace(/_/g, " ");
+  const restTitle = rest.replace(/\w\S*/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  return plantaLabel(code) + (restTitle ? " · " + restTitle : "");
+}
+
+// Misma forma que una fila de aggregateByLinea, pero calculada sobre TODAS las
+// filas juntas (no por línea) — para la columna/fila de totales del informe.
+function computeTotalRow(rows) {
+  const mermaStdPct = weightedMermaStdPct(rows);
+  const mermaRealPct = weightedMermaRealPct(rows);
+  return {
+    kg: sum(rows, r => r.kg), uds: sum(rows, r => r.udsCaja),
+    mermaStdPct, mermaRealPct,
+    // Aditivo: los REPORT_ROW_DEFS del informe original no leen este campo, así
+    // que las cifras del PDF contrastado contra la referencia no cambian.
+    stdCoverage: stdCoverage(rows),
+    desviacionPct: (mermaStdPct !== null && mermaRealPct !== null) ? (mermaRealPct - mermaStdPct) : null,
+    sobrepesoPct: weightedSobrepesoPct(rows),
+    disponibilidad: meanDisponibilidad(rows)
+  };
+}
+
+// Tabla "pivote" al estilo del PDF de referencia: una columna por línea + una
+// columna de total, una fila por métrica (Unidades, Kg, Merma real…).
+function reportPivotTable(porLinea, totalRow, totalLabel, rowsDefs) {
+  const cols = [...porLinea, { ...totalRow, linea: totalLabel, isTotal: true }];
+  let html = `<table class="report-pivot"><thead><tr><th>Línea</th>`;
+  cols.forEach(c => { html += `<th class="${c.isTotal ? "total-col" : ""}">${escapeHtml(c.linea)}</th>`; });
+  html += `</tr></thead><tbody>`;
+  rowsDefs.forEach(rd => {
+    html += `<tr><td>${escapeHtml(rd.label)}</td>`;
+    cols.forEach(c => {
+      const v = rd.get(c);
+      html += `<td class="${c.isTotal ? "total-col" : ""}">${rd.fmt(v)}</td>`;
+    });
+    html += `</tr>`;
+  });
+  html += `</tbody></table>`;
+  return html;
+}
+
+const REPORT_PCT = v => v === null ? "—" : fmtPct(v);
+const REPORT_PCT_SIGNED = v => v === null ? "—" : (v > 0 ? "+" : "") + fmtPct(v);
+const REPORT_ROW_DEFS = [
+  { label: "Unidades", get: d => d.uds, fmt: v => fmtInt(v) },
+  { label: "Kg", get: d => d.kg, fmt: v => fmtKg(v) },
+  { label: "Merma real (%)", get: d => d.mermaRealPct, fmt: REPORT_PCT },
+  { label: "Sobrepeso real (%)", get: d => d.sobrepesoPct, fmt: REPORT_PCT },
+  { label: "Estándar (%)", get: d => d.mermaStdPct, fmt: REPORT_PCT },
+  { label: "Desviación (%)", get: d => d.desviacionPct, fmt: REPORT_PCT_SIGNED },
+  { label: "Disponibilidad (%)", get: d => d.disponibilidad, fmt: v => v === null ? "—" : fmtPct(v, 1) }
+];
+// El acumulado del año no lleva sobrepeso ni disponibilidad, igual que el PDF de referencia.
+const REPORT_ROW_DEFS_ACC = REPORT_ROW_DEFS.filter(r => r.label !== "Sobrepeso real (%)" && r.label !== "Disponibilidad (%)");
+
+// ¿Hay jornada de los DOS turnos guardada para esta línea y este día?
+// Es la condición para ofrecer el informe de jornada completa.
+function personalPareja(linea, fechaISO) {
+  const manana = state.personal.get(personalKey(linea, fechaISO, "manana"));
+  const tarde = state.personal.get(personalKey(linea, fechaISO, "tarde"));
+  return (manana && tarde) ? { manana, tarde } : null;
+}
+
+// Informe de jornada completa: Mañana y Tarde de la misma línea y el mismo día,
+// uno al lado del otro, más la columna del día entero. Los kg de cada turno se
+// obtienen con el mismo reparto Mañana/Tarde que usa el resto del dashboard
+// (applyTurnoFilter/PR_TURNO_FIELDS), nunca con una cuenta propia; y el total
+// del día se calcula sobre las filas SIN prorratear, no sumando las dos
+// columnas, para que coincida con lo que enseña el dashboard con Turno=Ambos.
+function personalJornadaHtml(linea, fechaISO) {
+  const par = personalPareja(linea, fechaISO);
+  if (!par) return "";
+  const fecha = new Date(fechaISO + "T00:00:00Z");
+  const prRows = state.productRows.filter(r => r.linea === linea && r.periodo.getTime() === fecha.getTime());
+
+  const porTurno = {
+    manana: computeTotalRow(applyTurnoFilter(prRows, "manana", PR_TURNO_FIELDS)),
+    tarde: computeTotalRow(applyTurnoFilter(prRows, "tarde", PR_TURNO_FIELDS))
+  };
+  const totalDia = computeTotalRow(prRows);
+
+  const hp = e => (e.personas || 0) * (e.horas || 0);
+  const hpM = hp(par.manana), hpT = hp(par.tarde), hpTotal = hpM + hpT;
+  const kgM = porTurno.manana.kg, kgT = porTurno.tarde.kg;
+  const prod = (kg, horasPersona) => horasPersona > 0 ? (kg / horasPersona).toFixed(1) + " kg/h·p" : "—";
+
+  // Mismo criterio que el resto del dashboard: sin cobertura de estándar
+  // suficiente no se enseña "Estándar 0,00 %" ni una desviación que en realidad
+  // es la merma entera, se dice que no hay estándar.
+  const std = d => d.stdCoverage < STD_COVERAGE_MIN ? "sin estándar" : REPORT_PCT(d.mermaStdPct);
+  const desv = d => d.stdCoverage < STD_COVERAGE_MIN ? "—" : REPORT_PCT_SIGNED(d.desviacionPct);
+  const disp = d => d.disponibilidad === null ? "—" : fmtPct(d.disponibilidad, 1);
+
+  const filas = [
+    { label: "Personas", m: fmtInt(par.manana.personas), t: fmtInt(par.tarde.personas), d: fmtInt(par.manana.personas + par.tarde.personas) },
+    { label: "Horas trabajadas", m: par.manana.horas, t: par.tarde.horas, d: par.manana.horas + par.tarde.horas },
+    { label: "Horas-persona", m: fmtInt(hpM), t: fmtInt(hpT), d: fmtInt(hpTotal) },
+    { label: "Kg producidos", m: fmtKg(kgM), t: fmtKg(kgT), d: fmtKg(totalDia.kg) },
+    { label: "Kg / hora-persona", m: prod(kgM, hpM), t: prod(kgT, hpT), d: prod(totalDia.kg, hpTotal), destacada: true },
+    { label: "Unidades", m: fmtInt(porTurno.manana.uds), t: fmtInt(porTurno.tarde.uds), d: fmtInt(totalDia.uds) },
+    { label: "Merma real (%)", m: REPORT_PCT(porTurno.manana.mermaRealPct), t: REPORT_PCT(porTurno.tarde.mermaRealPct), d: REPORT_PCT(totalDia.mermaRealPct) },
+    { label: "Estándar (%)", m: std(porTurno.manana), t: std(porTurno.tarde), d: std(totalDia) },
+    { label: "Desviación (%)", m: desv(porTurno.manana), t: desv(porTurno.tarde), d: desv(totalDia) },
+    { label: "Disponibilidad (%)", m: disp(porTurno.manana), t: disp(porTurno.tarde), d: disp(totalDia) }
+  ];
+
+  const cuerpo = filas.map(f => `
+    <tr${f.destacada ? ` class="linea-total"` : ""}>
+      <th>${escapeHtml(f.label)}</th>
+      <td>${f.m}</td><td>${f.t}</td><td class="total-col">${f.d}</td>
+    </tr>`).join("");
+
+  return `
+    <div class="report-block">
+      <h2 class="report-h2">Jornada completa — ${escapeHtml(linea)} · ${fmtDate(fecha)}</h2>
+      <table class="report-pivot">
+        <thead><tr>
+          <th></th><th>Mañana</th><th>Tarde</th><th class="total-col">Total día</th>
+        </tr></thead>
+        <tbody>${cuerpo}</tbody>
+      </table>
+      <p class="report-sub" style="margin-top:6px;">
+        Personas y horas son dato manual introducido en la pestaña Personal.
+        Los kg de cada turno se reparten proporcionalmente al tiempo que cada OF
+        pasa antes y después de las 14:00; el total del día no es la suma de las
+        dos columnas de % sino el cálculo sobre todas las OF del día.
+      </p>
+    </div>`;
+}
+
+// Genera el informe con el alcance ACTUAL del filtro Planta/Área/Línea/Turno/Día/
+// Semana — así "solo la L6 de Elaborado", "toda Elaborado" o "todo Noel 2" es
+// simplemente seleccionar eso arriba antes de pulsar "Exportar informe".
+function renderPrintReport() {
+  const rows = getFilteredRows();
+  const porLinea = aggregateByLinea(rows).sort((a, b) => a.linea.localeCompare(b.linea, "es", { numeric: true }));
+  const totalRow = computeTotalRow(rows);
+  const areasEnScope = [...new Set(porLinea.map(d => d.area))];
+
+  let title;
+  if (areasEnScope.length === 1) title = "KPI's — " + areaDisplayName(areasEnScope[0]);
+  else if (areasEnScope.length > 1 && areasEnScope.length <= 4) title = "KPI's — " + areasEnScope.map(areaDisplayName).join(" + ");
+  else title = "KPI's — " + areasEnScope.length + " áreas seleccionadas";
+
+  const semanasEnScope = new Set(rows.map(r => r.semana.key));
+  let periodoLabel;
+  if (semanasEnScope.size === 1 && rows.length) {
+    const s = rows[0].semana;
+    periodoLabel = `Semana ${s.week} · ${s.year} (${fmtDate(s.monday)}–${fmtDate(s.sunday)})`;
+  } else {
+    periodoLabel = state.filters.desde && state.filters.hasta
+      ? `${fmtDate(state.filters.desde)} – ${fmtDate(state.filters.hasta)}` : "—";
+  }
+  const turnoLabel = { ambos: "Ambos", manana: "Mañana", tarde: "Tarde" }[state.filters.turno];
+  const diaLabel = { todos: "Todos", laborables: "Laborables", finde: "Fin de semana" }[state.filters.dia];
+  const totalColLabel = areasEnScope.length === 1 ? areasEnScope[0] : "TOTAL";
+
+  // Acumulado del año: mismo alcance de Área/Línea/Turno/Día pero SIN limitar por
+  // Desde/Hasta, filtrado solo al año de referencia — igual que la tabla
+  // "ACUMULAT" del informe original.
+  const anioRef = (state.filters.hasta || new Date()).getUTCFullYear();
+  const accRows = getScopedRows().filter(r => r.periodo.getUTCFullYear() === anioRef);
+  const porLineaAcc = aggregateByLinea(accRows).sort((a, b) => a.linea.localeCompare(b.linea, "es", { numeric: true }));
+  const totalRowAcc = computeTotalRow(accRows);
+
+  const porArticulo = aggregateByArticulo(rows);
+  let detailHtml = "";
+  porLinea.forEach(l => {
+    const items = porArticulo.filter(d => d.linea === l.linea).sort((a, b) => b.kg - a.kg);
+    detailHtml += items.map(d => `
+      <tr>
+        <td>${escapeHtml(d.linea)}</td>
+        <td>${escapeHtml(d.producto)}</td>
+        <td>${escapeHtml(d.desc)}</td>
+        <td>${fmtInt(d.uds)}</td>
+        <td>${fmtKg(d.kg)}</td>
+        <td>${REPORT_PCT(d.mermaRealPct)}</td>
+        <td>${REPORT_PCT(d.mermaStdPct)}</td>
+        <td>${REPORT_PCT_SIGNED(d.desviacionPct)}</td>
+      </tr>`).join("");
+    detailHtml += `
+      <tr class="linea-total">
+        <td colspan="2">TOTAL ${escapeHtml(l.linea)}</td>
+        <td></td>
+        <td>${fmtInt(l.uds)}</td>
+        <td>${fmtKg(l.kg)}</td>
+        <td>${REPORT_PCT(l.mermaRealPct)}</td>
+        <td>${REPORT_PCT(l.mermaStdPct)}</td>
+        <td>${REPORT_PCT_SIGNED(l.desviacionPct)}</td>
+      </tr>`;
+  });
+
+  // Productividad de personal (dato manual, sección 13): solo se añade algo al
+  // informe si hay entradas guardadas para alguna línea/fecha/turno que caiga
+  // dentro de la selección actual — si el usuario nunca usó la pestaña
+  // "Personal", personalRelevantes queda vacío y el informe sale IDÉNTICO a
+  // como salía antes de esta función existir.
+  const personalRelevantes = [...state.personal.values()].filter(e => {
+    if (!porLinea.some(l => l.linea === e.linea)) return false;
+    const fecha = new Date(e.fecha + "T00:00:00Z").getTime();
+    if (state.filters.desde && fecha < state.filters.desde.getTime()) return false;
+    if (state.filters.hasta && fecha > state.filters.hasta.getTime() + 86399999) return false;
+    if (state.filters.turno !== "ambos" && state.filters.turno !== e.turno) return false;
+    return true;
+  }).sort((a, b) => (a.fecha + a.linea + a.turno).localeCompare(b.fecha + b.linea + b.turno));
+
+  // Segundo informe de personal: jornada COMPLETA de una línea y un día, con
+  // Mañana y Tarde en la misma hoja (no es "mañana contra tarde": son los datos
+  // de los dos turnos juntos, más el total del día). Solo se genera cuando se
+  // pide expresamente desde el botón "2 turnos" de la pestaña Personal
+  // (state.printPersonalPair); el informe normal y el PDF individual siguen
+  // saliendo exactamente igual que antes.
+  let jornadaHtml = "";
+  if (state.printPersonalPair) {
+    jornadaHtml = personalJornadaHtml(state.printPersonalPair.linea, state.printPersonalPair.fecha);
+  }
+
+  // En el informe de jornada completa, la lista genérica de personal repetiría
+  // exactamente las dos filas que el bloque de arriba ya muestra desglosadas
+  // (el alcance es una sola línea y un solo día), así que se omite.
+  let personalHtml = "";
+  if (personalRelevantes.length && !state.printPersonalPair) {
+    const filasPersonal = personalRelevantes.map(e => {
+      const { kg, horasPersona, kgPorHoraPersona } = personalProductividad(e);
+      return `
+      <tr>
+        <td>${escapeHtml(e.linea)}</td>
+        <td>${fmtDate(new Date(e.fecha + "T00:00:00Z"))}</td>
+        <td>${e.turno === "manana" ? "Mañana" : "Tarde"}</td>
+        <td>${fmtInt(e.personas)}</td>
+        <td>${e.horas}</td>
+        <td>${fmtKg(kg)}</td>
+        <td>${fmtInt(horasPersona)}</td>
+        <td>${kgPorHoraPersona === null ? "—" : kgPorHoraPersona.toFixed(1)}</td>
+      </tr>`;
+    }).join("");
+    personalHtml = `
+    <div class="report-block">
+      <h2 class="report-h2">Productividad de personal (dato manual)</h2>
+      <table class="report-detail">
+        <thead><tr>
+          <th>Línea</th><th>Fecha</th><th>Turno</th><th>Personas</th><th>Horas</th>
+          <th>Kg</th><th>Horas-persona</th><th>Kg/hora-persona</th>
+        </tr></thead>
+        <tbody>${filasPersonal}</tbody>
+      </table>
+    </div>`;
+  }
+
+  const body = document.getElementById("printReportBody");
+  body.innerHTML = `
+    <h1 class="report-title">${escapeHtml(title)}</h1>
+    <p class="report-sub">${escapeHtml(periodoLabel)}</p>
+    <p class="report-meta">Turno: ${turnoLabel} · Día: ${diaLabel} · ${porLinea.length} línea${porLinea.length === 1 ? "" : "s"} · Generado el ${fmtDate(new Date())}</p>
+
+    <div class="report-block">
+      <h2 class="report-h2">Resumen — ${escapeHtml(periodoLabel)}</h2>
+      ${porLinea.length ? reportPivotTable(porLinea, totalRow, totalColLabel, REPORT_ROW_DEFS) : `<p class="report-sub">Sin datos para la selección actual.</p>`}
+    </div>
+    ${jornadaHtml}
+    ${personalHtml}
+    <div class="report-block">
+      <h2 class="report-h2">Acumulado ${anioRef}</h2>
+      ${porLineaAcc.length ? reportPivotTable(porLineaAcc, totalRowAcc, totalColLabel, REPORT_ROW_DEFS_ACC) : `<p class="report-sub">Sin datos acumulados de ${anioRef} para esta selección.</p>`}
+    </div>
+
+    <div class="report-block">
+      <h2 class="report-h2">Top 10 producción y merma (selección actual)</h2>
+      <div class="report-charts">
+        <div class="card chart-card" id="reportChartProd"></div>
+        <div class="card chart-card" id="reportChartMerma"></div>
+      </div>
+    </div>
+
+    <h2 class="report-h2">Detalle por artículo</h2>
+    <table class="report-detail">
+      <thead><tr>
+        <th>Línea</th><th>Artículo</th><th>Descripción</th><th>Uds.</th><th>Kg</th>
+        <th>Merma real</th><th>Merma std</th><th>Desviación</th>
+      </tr></thead>
+      <tbody>${detailHtml || `<tr><td colspan="8">Sin datos para la selección actual.</td></tr>`}</tbody>
+    </table>
+  `;
+
+  if (porArticulo.length) {
+    renderBarChart("reportChartProd", "Top 10 producción", "Kg encajados",
+      porArticulo.slice().sort((a, b) => b.kg - a.kg).map(d => ({ label: d.producto + " · " + d.desc, value: d.kg })),
+      { formatValue: v => fmtKg(v), color: "#2a78d6" });
+    const conMerma = porArticulo.filter(d => d.mermaRealPct !== null).sort((a, b) => b.mermaRealPct - a.mermaRealPct);
+    renderBarChart("reportChartMerma", "Top 10 merma real (%)", "Sobre MMPP, solo artículos con estándar",
+      conMerma.map(d => ({ label: d.producto + " · " + d.desc, value: d.mermaRealPct })),
+      { formatValue: v => fmtPct(v), color: "#e34948" });
+  }
+}
+
+/* ============================================================
+   13. PERSONAL / PRODUCTIVIDAD (kg por hora-persona) — dato manual
+   ============================================================ */
+// Mapex no trae el número de personas en planta, y cambia día a día. Esta
+// sección es puramente aditiva: si nunca se guarda ninguna entrada aquí,
+// nada del resto del dashboard ni del informe PDF cambia de comportamiento.
+
+const PERSONAL_STORAGE_KEY = "mapexPersonalV1";
+
+function loadPersonal() {
+  try {
+    const raw = localStorage.getItem(PERSONAL_STORAGE_KEY);
+    if (raw) JSON.parse(raw).forEach(e => state.personal.set(e.key, e));
+  } catch (err) { console.error("No se pudo leer el registro de personal guardado", err); }
+}
+
+function savePersonalToStorage() {
+  try {
+    localStorage.setItem(PERSONAL_STORAGE_KEY, JSON.stringify([...state.personal.values()]));
+  } catch (err) { console.error("No se pudo guardar el registro de personal", err); }
+}
+
+function personalKey(linea, fechaISO, turno) { return linea + "||" + fechaISO + "||" + turno; }
+
+// Kg realmente producidos por una línea en un día y turno concretos —
+// reutiliza el mismo reparto Mañana/Tarde (scaleRowByTurno/PR_TURNO_FIELDS)
+// que usa el resto del dashboard, para que la cifra de kg sea coherente con
+// todo lo demás (nunca se recalcula con una lógica distinta).
+function kgLineaFechaTurno(linea, fechaISO, turno) {
+  const fecha = new Date(fechaISO + "T00:00:00Z");
+  const rows = state.productRows.filter(r => r.linea === linea && r.periodo.getTime() === fecha.getTime());
+  const scaled = rows.map(r => scaleRowByTurno(r, turno, PR_TURNO_FIELDS));
+  return sum(scaled, r => r.kg);
+}
+
+function personalProductividad(entry) {
+  const kg = kgLineaFechaTurno(entry.linea, entry.fecha, entry.turno);
+  const horasPersona = (entry.personas || 0) * (entry.horas || 0);
+  const kgPorHoraPersona = horasPersona > 0 ? kg / horasPersona : null;
+  return { kg, horasPersona, kgPorHoraPersona };
+}
+
+function personalFormState() {
+  return {
+    linea: document.getElementById("personalLinea").value,
+    fecha: document.getElementById("personalFecha").value,
+    turno: document.querySelector("#personalTurnoChips .chip.active").dataset.turno,
+    personas: parseFloat(document.getElementById("personalPersonas").value) || 0,
+    horas: parseFloat(document.getElementById("personalHoras").value) || 0
+  };
+}
+
+function updatePersonalPreview() {
+  const f = personalFormState();
+  const el = document.getElementById("personalPreview");
+  if (!f.linea || !f.fecha) { el.textContent = ""; return; }
+  const { kg, horasPersona, kgPorHoraPersona } = personalProductividad(f);
+  el.innerHTML = `Producción de <strong>${escapeHtml(f.linea)}</strong> el ${fmtDate(new Date(f.fecha + "T00:00:00Z"))} (${f.turno === "manana" ? "Mañana" : "Tarde"}): <strong>${fmtKg(kg)}</strong>` +
+    (horasPersona > 0
+      ? ` · ${fmtInt(horasPersona)} horas-persona · <strong>${kgPorHoraPersona.toFixed(1)} kg/hora-persona</strong>`
+      : ` · rellena personas y horas para calcular kg/hora-persona`);
+}
+
+function renderPersonalTable() {
+  const el = document.getElementById("personalTable");
+  const entries = [...state.personal.values()].sort((a, b) => (b.fecha + b.linea + b.turno).localeCompare(a.fecha + a.linea + a.turno));
+  if (!entries.length) {
+    el.innerHTML = `<div class="empty-note">Todavía no has guardado ninguna jornada. Rellena el formulario de arriba y pulsa "Guardar".</div>`;
+    return;
+  }
+  const rows = entries.map(e => {
+    const { kg, horasPersona, kgPorHoraPersona } = personalProductividad(e);
+    // El PDF de jornada completa solo se ofrece si esta línea/día tiene
+    // guardados los DOS turnos; si falta uno, el botón sale desactivado con la
+    // razón, en vez de generar media hoja o desaparecer sin explicación.
+    const tienePareja = !!personalPareja(e.linea, e.fecha);
+    return `<tr>
+      <td>${escapeHtml(e.linea)}</td>
+      <td>${fmtDate(new Date(e.fecha + "T00:00:00Z"))}</td>
+      <td>${e.turno === "manana" ? "Mañana" : "Tarde"}</td>
+      <td>${fmtInt(e.personas)}</td>
+      <td>${e.horas}</td>
+      <td>${fmtKg(kg)}</td>
+      <td>${fmtInt(horasPersona)}</td>
+      <td>${kgPorHoraPersona === null ? "—" : kgPorHoraPersona.toFixed(1) + " kg/h·p"}</td>
+      <td><button class="ghost" data-pdf-key="${escapeHtml(e.key)}" style="padding:3px 8px;font-size:11px;" title="Informe solo de este turno">📄 Turno</button></td>
+      <td><button class="ghost" data-pdf-pair="${escapeHtml(e.linea)}||${escapeHtml(e.fecha)}" style="padding:3px 8px;font-size:11px;"
+        ${tienePareja ? `title="Informe de la jornada completa: Mañana y Tarde en la misma hoja"` : `disabled title="Falta guardar el otro turno de este día para poder generar la jornada completa"`}>📄 2 turnos</button></td>
+      <td><button class="ghost" data-del-key="${escapeHtml(e.key)}" style="padding:3px 8px;font-size:11px;">🗑</button></td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Línea</th><th>Fecha</th><th>Turno</th><th>Personas</th><th>Horas</th>
+      <th>Kg</th><th>Horas-persona</th><th>Kg/hora-persona</th><th></th><th></th><th></th>
+    </tr></thead>
+    <tbody>${rows}</tbody></table>`;
+
+  el.querySelectorAll("[data-del-key]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.personal.delete(btn.dataset.delKey);
+      savePersonalToStorage();
+      renderPersonalTable();
+    });
+  });
+  el.querySelectorAll("[data-pdf-key]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const e = state.personal.get(btn.dataset.pdfKey);
+      if (e) abrirInformePersonal(e.linea, e.fecha, e.turno, false);
+    });
+  });
+  el.querySelectorAll("[data-pdf-pair]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const [linea, fecha] = btn.dataset.pdfPair.split("||");
+      // Turno "ambos": el informe cubre el día entero, y además lleva arriba el
+      // bloque con Mañana y Tarde desglosados.
+      abrirInformePersonal(linea, fecha, "ambos", true);
+    });
+  });
+}
+
+// Acota el alcance a una línea y un día concretos y abre el informe. `pair`
+// decide si además se añade el bloque de jornada completa (Mañana + Tarde).
+function abrirInformePersonal(linea, fechaISO, turno, pair) {
+  const fecha = new Date(fechaISO + "T00:00:00Z");
+  const rowMuestra = state.productRows.find(r => r.linea === linea);
+  state.filters.lineas = new Set([linea]);
+  state.filters.areas = new Set(rowMuestra ? [rowMuestra.area] : [...state.filters.areas]);
+  state.filters.desde = fecha;
+  state.filters.hasta = fecha;
+  state.filters.turno = turno;
+  state.filters.dia = "todos";
+  state.printPersonalPair = pair ? { linea, fecha: fechaISO } : null;
+  renderFilters();
+  renderAll();
+  renderPrintReport();
+  document.getElementById("personalView").hidden = true;
+  document.getElementById("printReport").hidden = false;
+  document.getElementById("printReport").scrollTop = 0;
+}
+
+function renderPersonalView() {
+  const lineaSel = document.getElementById("personalLinea");
+  const lineasActuales = [...new Set(state.productRows.map(r => r.linea))].sort();
+  const currentValue = lineaSel.value;
+  lineaSel.innerHTML = lineasActuales.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join("");
+  if (lineasActuales.includes(currentValue)) lineaSel.value = currentValue;
+  if (!document.getElementById("personalFecha").value) {
+    document.getElementById("personalFecha").value = toInputDate(state.filters.hasta || new Date());
+  }
+  updatePersonalPreview();
+  renderPersonalTable();
+}
+
+document.getElementById("btnPersonal").addEventListener("click", () => {
+  document.getElementById("personalView").hidden = false;
+  document.getElementById("personalView").scrollTop = 0;
+  renderPersonalView();
+});
+document.getElementById("personalBack").addEventListener("click", () => {
+  document.getElementById("personalView").hidden = true;
+});
+document.getElementById("personalLinea").addEventListener("change", updatePersonalPreview);
+document.getElementById("personalFecha").addEventListener("change", updatePersonalPreview);
+document.getElementById("personalPersonas").addEventListener("input", updatePersonalPreview);
+document.getElementById("personalHoras").addEventListener("input", updatePersonalPreview);
+document.querySelectorAll("#personalTurnoChips .chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    document.querySelectorAll("#personalTurnoChips .chip").forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    updatePersonalPreview();
+  });
+});
+document.getElementById("personalGuardar").addEventListener("click", () => {
+  const f = personalFormState();
+  if (!f.linea || !f.fecha) { alert("Elige línea y fecha."); return; }
+  if (!f.personas || !f.horas) { alert("Rellena personas y horas trabajadas."); return; }
+  const key = personalKey(f.linea, f.fecha, f.turno);
+  state.personal.set(key, { key, linea: f.linea, fecha: f.fecha, turno: f.turno, personas: f.personas, horas: f.horas });
+  savePersonalToStorage();
+  renderPersonalTable();
+});
+
+/* ============================================================
+   14. ARRANQUE
+   ============================================================ */
+
+loadPersonal();
+loadSettings();
+renderAjustes();
+setTab("resumen");
+setHistLevel("mes");
+setDetalleSub("articulo");
+applyCtAvailability();
+</script>
+</body>
+</html>

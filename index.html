@@ -188,6 +188,9 @@
   /* Vista Motivos: gráficos arriba y la tabla de OF a ancho completo debajo */
   .motivos-wrap { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
   #panelParoOf { flex: 0 0 32%; }
+  /* Histórico de merma del artículo buscado: se lleva algo menos de la mitad
+     de la pestaña Detalle, y solo mientras haya búsqueda activa. */
+  #chartMermaArticulo { flex: 0 0 42%; }
   .stack { display: grid; grid-template-rows: 1fr 1fr; gap: 12px; min-height: 0; }
   .row-controls { flex-shrink: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
@@ -730,6 +733,8 @@
           </header>
           <div class="body flush"><div id="tableArticulo"></div></div>
         </div>
+        <!-- Solo aparece al buscar: histórico completo de merma del artículo -->
+        <div class="card chart-card" id="chartMermaArticulo" hidden></div>
       </div>
 
       <div class="detalle-sub stack" data-sub="of">
@@ -1391,6 +1396,8 @@ function setDetalleSub(sub) {
   state.ui.detalleSub = sub;
   document.querySelectorAll("#detalleSeg button").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
   document.querySelectorAll(".detalle-sub").forEach(g => g.classList.toggle("active", g.dataset.sub === sub));
+  // El histórico del artículo solo vive en la sub-tabla de artículos.
+  renderMermaArticulo();
 }
 
 document.querySelectorAll("#detalleSeg button").forEach(btn => {
@@ -2737,7 +2744,10 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
   const allPoints = series.flatMap(s => s.points);
   if (!allPoints.length) { container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p><p class="empty-note">Sin datos para la selección.</p>`; return; }
 
-  const w = 560, h = 220, padL = 44, padR = 16, padT = 14, padB = 28;
+  // El SVG conserva su proporción al escalar, así que en una caja mucho más
+  // apaisada que el viewBox sobra margen a los lados: opts.w/opts.h permiten
+  // ajustarlo al hueco real en vez de dejar el gráfico flotando en el centro.
+  const w = opts.w || 560, h = opts.h || 220, padL = 44, padR = 16, padT = 14, padB = 28;
   const xs = [...new Set(allPoints.map(p => p.x))].sort((a, b) => a - b);
   const yVals = allPoints.map(p => p.y);
   const yMax = Math.max(...yVals, 0.0001) * 1.15;
@@ -2760,12 +2770,16 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
   });
 
   let lines = "", dots = "";
+  const ordered = [];
   series.forEach((s, si) => {
     const pts = s.points.slice().sort((a, b) => xs.indexOf(a.x) - xs.indexOf(b.x));
+    ordered[si] = pts;
     const path = pts.map((p, i) => (i === 0 ? "M" : "L") + xScale(p.x).toFixed(1) + "," + yScale(p.y).toFixed(1)).join(" ");
-    lines += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>`;
-    pts.forEach(p => {
-      dots += `<circle data-serie="${si}" cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="4" fill="${s.color}" stroke="${cssVar("--surface-1")}" stroke-width="2" style="cursor:pointer;" data-x="${p.x}" data-y="${p.y}"></circle>`;
+    // s.dash convierte la serie en línea de referencia (p. ej. el estándar),
+    // para que se lea como "objetivo" y no como un dato más al mismo nivel.
+    lines += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="${s.dash ? 1.6 : 2}"${s.dash ? ` stroke-dasharray="${s.dash}"` : ""} stroke-linejoin="round" stroke-linecap="round"></path>`;
+    pts.forEach((p, pi) => {
+      dots += `<circle data-serie="${si}" data-i="${pi}" cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="${s.dash ? 2.5 : 4}" fill="${s.color}" stroke="${cssVar("--surface-1")}" stroke-width="${s.dash ? 1 : 2}" style="cursor:pointer;" data-x="${p.x}" data-y="${p.y}"></circle>`;
     });
   });
 
@@ -2778,7 +2792,10 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
   svg.querySelectorAll("circle").forEach(dot => {
     const si = +dot.dataset.serie;
     const s = series[si];
-    dot.addEventListener("mousemove", evt => showTooltip(`<strong>${escapeHtml(s.label)}</strong><br>${opts.formatX ? opts.formatX(+dot.dataset.x) : dot.dataset.x}: ${opts.formatY ? opts.formatY(+dot.dataset.y) : dot.dataset.y}`, evt));
+    const punto = ordered[si][+dot.dataset.i];
+    dot.addEventListener("mousemove", evt => showTooltip(
+      opts.tooltip ? opts.tooltip(punto, s)
+        : `<strong>${escapeHtml(s.label)}</strong><br>${opts.formatX ? opts.formatX(+dot.dataset.x) : dot.dataset.x}: ${opts.formatY ? opts.formatY(+dot.dataset.y) : dot.dataset.y}`, evt));
     dot.addEventListener("mouseleave", hideTooltip);
   });
 }
@@ -2887,6 +2904,119 @@ function renderTableArticulo(data) {
       setDetalleSub("of");
     });
   });
+}
+
+/* ---------- Histórico de merma del artículo buscado ----------
+   Aparece al escribir en el buscador de la pestaña Detalle. A propósito usa
+   getScopedRows() y NO el rango Desde/Hasta: la tabla de al lado responde
+   "cómo va este artículo en el periodo elegido" y esto responde "cómo se ha
+   comportado siempre", que es la pregunta para la que no había respuesta. */
+
+// Agrupa por día o por semana y devuelve merma real y estándar ponderadas de
+// cada punto — mismo cálculo que las tablas (kg de merma / kg de MMPP), no un
+// promedio de porcentajes, que daría otro número.
+function mermaTimeline(rows, porSemana) {
+  const map = new Map();
+  for (const r of rows) {
+    const info = porSemana ? r.semana : null;
+    const key = porSemana ? info.key : r.periodo.getTime();
+    if (!map.has(key)) {
+      map.set(key, {
+        orden: porSemana ? info.monday.getTime() : r.periodo.getTime(),
+        etiqueta: porSemana ? "S" + info.week + " · " + fmtDayShort(info.monday) : fmtDayLong(r.periodo),
+        rows: []
+      });
+    }
+    map.get(key).rows.push(r);
+  }
+  return [...map.values()].sort((a, b) => a.orden - b.orden).map(g => ({
+    x: g.orden,
+    etiqueta: g.etiqueta,
+    real: weightedMermaRealPct(g.rows),
+    std: weightedMermaStdPct(g.rows),
+    // Sin esto, un día cuyos artículos no tienen estándar definido en Mapex
+    // dibujaría un 0% como si el objetivo fuese cero merma.
+    cobertura: stdCoverage(g.rows),
+    kg: sum(g.rows, r => r.kg),
+    mermaKg: sum(g.rows, r => r.mermaKg || 0),
+    ofs: new Set(g.rows.map(r => r.of).filter(Boolean)).size
+  }));
+}
+
+function renderMermaArticulo() {
+  const card = document.getElementById("chartMermaArticulo");
+  const search = (document.getElementById("searchDetalle").value || "").trim();
+  // Solo tiene sentido en la sub-tabla de artículos: la de OF va por orden de
+  // fabricación, no por artículo.
+  if (!search || state.ui.detalleSub !== "articulo" || !state.productRows.length) { card.hidden = true; return; }
+
+  const needle = search.toLowerCase();
+  const rows = getScopedRows().filter(r =>
+    r.producto.toLowerCase().includes(needle) || r.desc.toLowerCase().includes(needle));
+  if (!rows.length) { card.hidden = true; return; }
+  card.hidden = false;
+
+  const productos = [...new Set(rows.map(r => r.producto))];
+  const dias = new Set(rows.map(r => r.periodo.getTime())).size;
+  // Con más de mes y medio de días sueltos la línea diaria se vuelve ilegible.
+  const porSemana = dias > 45;
+  const grano = porSemana ? "por semana" : "por día";
+  const lineas = [...new Set(rows.map(r => r.linea))];
+  const fmtX = x => porSemana ? "S" + isoWeekInfo(new Date(x)).week : fmtDayShort(new Date(x));
+
+  const tooltipDe = (p, s) => `<strong>${escapeHtml(s.label)}</strong><br>${escapeHtml(p.etiqueta)}` +
+    `<br>Merma: ${fmtPct(p.y)}` +
+    (p.kg ? `<br>${fmtKg(p.kg)} encajados · ${fmtInt(p.mermaKg)} kg de merma` : "") +
+    (p.ofs ? `<br>${p.ofs} OF` : "");
+
+  if (productos.length === 1) {
+    const serie = mermaTimeline(rows, porSemana);
+    const desc = rows[0].desc;
+    // Mismo criterio que la tabla: si menos de la mitad del MMPP tiene
+    // rendimiento estándar en Mapex, no se enseña un estándar que no existe.
+    const conStd = serie.filter(p => p.std !== null && p.cobertura >= STD_COVERAGE_MIN);
+    const hayStd = stdCoverage(rows) >= STD_COVERAGE_MIN;
+    const series = [{
+      label: "Merma real", color: cssVar("--s8"), dash: null,
+      points: serie.filter(p => p.real !== null).map(p => ({ x: p.x, y: p.real, etiqueta: p.etiqueta, kg: p.kg, mermaKg: p.mermaKg, ofs: p.ofs }))
+    }];
+    if (hayStd && conStd.length) {
+      series.push({
+        label: "Merma estándar", color: cssVar("--text-muted"), dash: "4 3",
+        points: conStd.map(p => ({ x: p.x, y: p.std, etiqueta: p.etiqueta, kg: 0, mermaKg: 0, ofs: 0 }))
+      });
+    }
+    const total = weightedMermaRealPct(rows), std = weightedMermaStdPct(rows);
+    const desv = (hayStd && total !== null && std !== null) ? total - std : null;
+    renderLineChart("chartMermaArticulo",
+      `Histórico de merma · ${escapeHtml(productos[0])}`,
+      `${escapeHtml(truncate(desc, 46))} — ${grano}, todo el histórico cargado (no solo el periodo de arriba) · ` +
+      `${lineas.length === 1 ? lineas[0] : lineas.length + " líneas"} · media ${fmtPct(total)}` +
+      (desv !== null
+        ? ` frente a ${fmtPct(std)} de estándar (${desv > 0 ? "+" : ""}${fmtPct(desv)})`
+        : ` · sin rendimiento estándar definido en Mapex, no hay con qué compararla`),
+      series, { formatY: v => v.toFixed(1) + "%", formatX: fmtX, tooltip: tooltipDe, w: 900, h: 210 });
+    return;
+  }
+
+  // Varios artículos coinciden con la búsqueda: una línea por artículo (los de
+  // más peso), sin estándar, que con 6 series ya sería ilegible.
+  const palette = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s7"];
+  const porKg = productos.map(p => ({ p, kg: sum(rows.filter(r => r.producto === p), r => r.kg) }))
+    .sort((a, b) => b.kg - a.kg).slice(0, 6);
+  const series = porKg.map((x, i) => ({
+    label: x.p, color: cssVar(palette[i % palette.length]), dash: null,
+    points: mermaTimeline(rows.filter(r => r.producto === x.p), porSemana)
+      .filter(p => p.real !== null)
+      .map(p => ({ x: p.x, y: p.real, etiqueta: p.etiqueta, kg: p.kg, mermaKg: p.mermaKg, ofs: p.ofs }))
+  })).filter(s => s.points.length);
+
+  renderLineChart("chartMermaArticulo",
+    `Histórico de merma · ${productos.length} artículos`,
+    `Coinciden ${productos.length} artículos con «${escapeHtml(search)}»` +
+    (productos.length > 6 ? `; se muestran los 6 de más peso` : "") +
+    ` — ${grano}, todo el histórico cargado. Escribe el código exacto para ver uno solo con su estándar.`,
+    series, { formatY: v => v.toFixed(1) + "%", formatX: fmtX, tooltip: tooltipDe, w: 900, h: 210 });
 }
 
 function renderTableOF(rows) {
@@ -3864,6 +3994,7 @@ function renderAll(skipFilters) {
   renderTableLinea(porLinea);
   renderTableArticulo(porArticulo);
   renderTableOF(rows);
+  renderMermaArticulo();
 
   const ctFiltered = state.ctRows.length ? getFilteredCtRows() : [];
   if (state.ctRows.length) {

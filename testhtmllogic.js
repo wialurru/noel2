@@ -29,7 +29,7 @@ const ids = ["dz1","file1","status1","dz2","file2","status2","dz3","file3","stat
   "topbar","tabbar","views","welcome","uploadSection","datosSlot","alertList","tabBadgeAlertas","alertasSub",
   "ajustesBody","periodoControls","periodoLabel","alcanceLabel","histSliderActive","histLevelTurno","app",
   "paroKpiRow","motivosGrid","motivosEmpty","chartParetoMotivos","chartParosLinea","tableParoOf","countParoOf","parosHint",
-  "autoStatus","folderInput","btnCargarCarpeta","btnCargarCarpetaTop"];
+  "autoStatus","folderInput","btnCargarCarpeta","btnCargarCarpetaTop","chartMermaArticulo"];
 const elMap = {};
 ids.forEach(id => elMap[id] = stubEl());
 
@@ -279,6 +279,72 @@ for (const [archivo, tipo] of Object.entries(esperado)) {
 const falso = sandbox.rowsToObjects([["Fecha", "Importe", "Cliente"], ["01/01/2026", "10", "X"]]);
 check("un CSV ajeno se rechaza en vez de asignarse a un tipo", sandbox.detectCsvKind(falso.index) === null,
   "detectado: " + sandbox.detectCsvKind(falso.index));
+
+/* ============================================================
+   Histórico de merma del artículo buscado (pestaña Detalle)
+   ============================================================ */
+
+console.log("\n=== Histórico de merma por artículo ===");
+sandbox.mergeProductRows(productRows);
+state.filters.areas = new Set(productRows.map(r => r.area));
+state.filters.lineas = new Set(productRows.map(r => r.linea));
+state.filters.turno = "ambos";
+state.filters.dia = "todos";
+state.ui.detalleSub = "articulo";
+const buscador = elMap.searchDetalle;
+const tarjeta = elMap.chartMermaArticulo;
+
+// El cálculo del punto tiene que ser el mismo que el de las tablas: kg de
+// merma sobre kg de MMPP, no el promedio de los porcentajes de cada fila.
+const unArticulo = productRows.filter(r => r.producto === "27752");
+const linea = sandbox.mermaTimeline(unArticulo, false);
+check("mermaTimeline hace un punto por día de producción",
+  linea.length === new Set(unArticulo.map(r => r.periodo.getTime())).size, linea.length + " puntos");
+const dia0 = unArticulo.filter(r => r.periodo.getTime() === linea[0].x);
+const esperadoDia0 = sum(dia0, "mermaKg") / sum(dia0, "mmpp") * 100;
+check("cada punto es merma ponderada (kg merma / kg MMPP), no media de %",
+  Math.abs(linea[0].real - esperadoDia0) < 1e-9, linea[0].real.toFixed(4) + " %");
+check("los puntos salen ordenados de más antiguo a más reciente",
+  linea.every((p, i) => i === 0 || p.x >= linea[i - 1].x));
+
+// Agrupar por semana debe conservar el total: mismos kg, mismo % global
+const porSemana = sandbox.mermaTimeline(unArticulo, true);
+const globalDia = sum(linea, "mermaKg") / sum(linea, "kg");
+const globalSem = sum(porSemana, "mermaKg") / sum(porSemana, "kg");
+check("agrupar por semana no pierde ni duplica producción",
+  Math.abs(sum(linea, "kg") - sum(porSemana, "kg")) < 1e-6 && Math.abs(globalDia - globalSem) < 1e-9,
+  `${porSemana.length} semana(s) contra ${linea.length} día(s)`);
+
+function pintar(texto) {
+  buscador.value = texto;
+  tarjeta.innerHTML = "";
+  sandbox.renderMermaArticulo();
+  return { oculto: tarjeta.hidden, html: tarjeta.innerHTML };
+}
+
+check("sin búsqueda el gráfico no ocupa sitio", pintar("").oculto);
+check("una búsqueda sin resultados tampoco lo muestra", pintar("zzzznoexiste").oculto);
+
+const conStd = pintar("27752");
+check("con un artículo con estándar se dibujan las dos series",
+  !conStd.oculto && conStd.html.includes("Merma real") && conStd.html.includes("Merma estándar"));
+check("la serie del estándar va discontinua para leerse como referencia",
+  conStd.html.includes("stroke-dasharray"));
+
+// 51488 (FUET) no tiene rendimiento estándar: mostrar "0,00 %" como objetivo
+// sería mentir, tiene que decir que no hay con qué comparar.
+const sinStd = pintar("51488");
+check("sin estándar definido se avisa en vez de pintar un 0 % falso",
+  !sinStd.oculto && !sinStd.html.includes("Merma estándar") && sinStd.html.includes("sin rendimiento estándar"),
+  sandbox.stdCoverage(productRows.filter(r => r.producto === "51488")).toFixed(2) + " de cobertura");
+
+const varios = pintar("PICADA");
+check("varias coincidencias dibujan una línea por artículo (máx. 6)",
+  !varios.oculto && (varios.html.match(/class="dot"/g) || []).length <= 6 && varios.html.includes("artículos"));
+
+state.ui.detalleSub = "of";
+check("en la sub-tabla de OF se oculta (allí se mira por orden, no por artículo)", pintar("27752").oculto);
+state.ui.detalleSub = "articulo";
 
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);
 process.exit(fallos === 0 ? 0 : 1);

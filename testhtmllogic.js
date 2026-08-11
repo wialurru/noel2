@@ -346,5 +346,50 @@ state.ui.detalleSub = "of";
 check("en la sub-tabla de OF se oculta (allí se mira por orden, no por artículo)", pintar("27752").oculto);
 state.ui.detalleSub = "articulo";
 
+// --- Drill-down: semana -> día -> OF --------------------------------------
+console.log("\n--- Drill del histórico (semana › día › OF) ---");
+pintar("27752");
+const semanaDe = unArticulo[0].semana.key;
+const diaDe = unArticulo[0].periodo.getTime();
+
+state.ui.mermaDrill = { busqueda: "27752", semana: semanaDe, dia: null };
+const nivel2 = pintar("27752");
+check("al bajar a una semana el gráfico pasa a días y sale la miga de vuelta",
+  nivel2.html.includes("por día, solo esta semana") && nivel2.html.includes("Todo el histórico"));
+
+state.ui.mermaDrill = { busqueda: "27752", semana: semanaDe, dia: diaDe };
+const nivel3 = pintar("27752");
+const ofsDia = sandbox.aggregateOfDia(unArticulo.filter(r => r.periodo.getTime() === diaDe));
+check("al bajar a un día se listan sus OF en vez del gráfico",
+  nivel3.html.includes("<table") && nivel3.html.includes("Merma kg") && !nivel3.html.includes("<svg"),
+  ofsDia.length + " OF");
+check("las OF vienen ordenadas por kg de merma, de mayor a menor",
+  ofsDia.every((o, i) => i === 0 || o.mermaKg <= ofsDia[i - 1].mermaKg));
+const sumaOf = sum(ofsDia, "mermaKg"), sumaDia = sum(unArticulo.filter(r => r.periodo.getTime() === diaDe), "mermaKg");
+check("la merma de las OF suma la del día (no se pierde ni se duplica ningún tramo)",
+  Math.abs(sumaOf - sumaDia) < 1e-9, fmtNum(sumaOf) + " kg");
+check("las tres migas están cuando se ha bajado hasta el día",
+  (nivel3.html.match(/class="ghost crumb"/g) || []).length === 2 && nivel3.html.includes("crumb-actual"));
+
+// Un drill que se queda sin filas (p. ej. al cambiar el filtro de línea) no
+// puede dejar la tarjeta vacía: tiene que volver arriba solo.
+state.ui.mermaDrill = { busqueda: "27752", semana: "1999-W01", dia: null };
+const huerfano = pintar("27752");
+check("un drill sin filas vuelve al histórico completo en vez de quedarse vacío",
+  !huerfano.oculto && !huerfano.html.includes("crumb-actual"));
+
+check("el título en aria-label va sin marcado (si no, rompería la etiqueta svg)",
+  !/aria-label="[^"]*</.test(nivel2.html));
+function fmtNum(n) { return Math.round(n * 100) / 100; }
+
+// Cero negativo: -0,004 kg no debe imprimirse como "-0 kg"
+const fmtIntCtx = ctx("fmtInt"), fmtPctCtx = ctx("fmtPct");
+check("un residuo negativo minúsculo se imprime como cero, no como -0",
+  fmtIntCtx(-0.004) === "0" && fmtPctCtx(-0.0001) === "0,00 %",
+  JSON.stringify(fmtIntCtx(-0.004)) + " / " + JSON.stringify(fmtPctCtx(-0.0001)));
+check("un valor negativo de verdad sigue saliendo negativo",
+  fmtIntCtx(-94) === "-94" && fmtPctCtx(-1.23) === "-1,23 %",
+  fmtIntCtx(-94) + " / " + fmtPctCtx(-1.23));
+
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);
 process.exit(fallos === 0 ? 0 : 1);

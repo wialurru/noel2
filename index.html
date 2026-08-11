@@ -191,6 +191,12 @@
   /* Histórico de merma del artículo buscado: se lleva algo menos de la mitad
      de la pestaña Detalle, y solo mientras haya búsqueda activa. */
   #chartMermaArticulo { flex: 0 0 42%; }
+  #chartMermaArticulo table { min-width: 640px; }
+  /* Migas del drill semana › día › OF, dentro del título del gráfico */
+  .merma-crumbs { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; font-weight: 400; }
+  .merma-crumbs .crumb { padding: 1px 8px; font-size: 11.5px; }
+  .merma-crumbs .crumb-sep { color: var(--text-muted); font-size: 11px; }
+  .merma-crumbs .crumb-actual { font-size: 11.5px; color: var(--text-secondary); font-weight: 600; }
   .stack { display: grid; grid-template-rows: 1fr 1fr; gap: 12px; min-height: 0; }
   .row-controls { flex-shrink: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
@@ -1201,7 +1207,11 @@ const state = {
     tab: "resumen",        // pestaña activa
     histLevel: "mes",      // nivel visible del histórico
     detalleSub: "articulo", // sub-tabla activa en Detalle
-    parosSub: "motivos"    // sub-vista activa en Paros
+    parosSub: "motivos",   // sub-vista activa en Paros
+    // Drill-down del histórico de merma: null = todo; con semana = los días de
+    // esa semana; con día = las OF de ese día. `busqueda` recuerda para qué
+    // texto se abrió, para no dejar un drill colgado al buscar otra cosa.
+    mermaDrill: { busqueda: null, semana: null, dia: null }
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -1223,9 +1233,14 @@ const state = {
   printPersonalPair: null
 };
 
-const fmtInt = n => n === null || n === undefined || Number.isNaN(n) ? "—" : n.toLocaleString("es-ES", { maximumFractionDigits: 0 });
-const fmtKg = n => n === null || n === undefined || Number.isNaN(n) ? "—" : n.toLocaleString("es-ES", { maximumFractionDigits: 0 }) + " kg";
-const fmtPct = (n, d = 2) => n === null || n === undefined || Number.isNaN(n) ? "—" : n.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d }) + " %";
+// Un residuo negativo minúsculo (-0,004 kg de merma) se imprimía como "-0 kg"
+// y "-0,00 %", que se lee como un dato raro cuando en realidad es un cero.
+// Se acerca a cero cualquier valor que redondee a cero con los decimales que
+// se van a mostrar, para que salga "0" y no "-0".
+const sinCeroNegativo = (n, d) => Math.abs(n) < Math.pow(10, -d) / 2 ? 0 : n;
+const fmtInt = n => n === null || n === undefined || Number.isNaN(n) ? "—" : sinCeroNegativo(n, 0).toLocaleString("es-ES", { maximumFractionDigits: 0 });
+const fmtKg = n => n === null || n === undefined || Number.isNaN(n) ? "—" : sinCeroNegativo(n, 0).toLocaleString("es-ES", { maximumFractionDigits: 0 }) + " kg";
+const fmtPct = (n, d = 2) => n === null || n === undefined || Number.isNaN(n) ? "—" : sinCeroNegativo(n, d).toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d }) + " %";
 const fmtDate = d => d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
 const toInputDate = d => d.toISOString().slice(0, 10);
 
@@ -2638,7 +2653,7 @@ function renderBarChart(containerId, title, sub, items, opts = {}) {
   });
 
   container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
-    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">${bars}</svg>`;
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(plainText(title))}">${bars}</svg>`;
 
   const svg = container.querySelector("svg");
   svg.querySelectorAll("rect").forEach(rect => {
@@ -2676,7 +2691,7 @@ function renderStackedBarChart(containerId, title, sub, items, legend, opts = {}
   const legendHtml = `<div class="legend">${legend.map(l => `<span class="item"><span class="dot" style="background:${l.color}"></span>${escapeHtml(l.label)}</span>`).join("")}</div>`;
 
   container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
-    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">${bars}</svg>${legendHtml}`;
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(plainText(title))}">${bars}</svg>${legendHtml}`;
 
   const svg = container.querySelector("svg");
   svg.querySelectorAll("rect").forEach(rect => {
@@ -2727,7 +2742,7 @@ function renderColumnChart(containerId, title, sub, items, opts = {}) {
   });
 
   container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
-    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">${grid}${bars}</svg>`;
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(plainText(title))}">${grid}${bars}</svg>`;
 
   const svg = container.querySelector("svg");
   svg.querySelectorAll("rect").forEach(rect => {
@@ -2769,7 +2784,11 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
     xlabels += `<text x="${xScale(x)}" y="${h - padB + 16}" text-anchor="middle" class="axis-text">${opts.formatX ? opts.formatX(x) : x}</text>`;
   });
 
-  let lines = "", dots = "";
+  // Los puntos se pintan sin capturar el ratón y encima va una circunferencia
+  // transparente más grande que es la que recibe hover y clic: acertar en un
+  // punto de 4px con el ratón es incómodo, y agrandar el punto visible
+  // emborronaría la línea.
+  let lines = "", dots = "", hits = "";
   const ordered = [];
   series.forEach((s, si) => {
     const pts = s.points.slice().sort((a, b) => xs.indexOf(a.x) - xs.indexOf(b.x));
@@ -2778,18 +2797,23 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
     // s.dash convierte la serie en línea de referencia (p. ej. el estándar),
     // para que se lea como "objetivo" y no como un dato más al mismo nivel.
     lines += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="${s.dash ? 1.6 : 2}"${s.dash ? ` stroke-dasharray="${s.dash}"` : ""} stroke-linejoin="round" stroke-linecap="round"></path>`;
+    // Desde la serie de referencia no se navega: no hay detalle detrás de un
+    // estándar, así que sus puntos informan pero no invitan a pulsar.
+    const clicable = !!opts.onPointClick && !s.dash;
     pts.forEach((p, pi) => {
-      dots += `<circle data-serie="${si}" data-i="${pi}" cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="${s.dash ? 2.5 : 4}" fill="${s.color}" stroke="${cssVar("--surface-1")}" stroke-width="${s.dash ? 1 : 2}" style="cursor:pointer;" data-x="${p.x}" data-y="${p.y}"></circle>`;
+      const cx = xScale(p.x).toFixed(1), cy = yScale(p.y).toFixed(1);
+      dots += `<circle cx="${cx}" cy="${cy}" r="${s.dash ? 2.5 : 4}" fill="${s.color}" stroke="${cssVar("--surface-1")}" stroke-width="${s.dash ? 1 : 2}" style="pointer-events:none;"></circle>`;
+      hits += `<circle data-serie="${si}" data-i="${pi}" data-clic="${clicable ? 1 : 0}" cx="${cx}" cy="${cy}" r="${clicable ? 11 : 6}" fill="transparent" style="cursor:${clicable ? "pointer" : "default"};"></circle>`;
     });
   });
 
   const legend = series.length > 1 ? `<div class="legend">${series.map(s => `<span class="item"><span class="dot" style="background:${s.color}"></span>${escapeHtml(s.label)}</span>`).join("")}</div>` : "";
 
   container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
-    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">${grid}${xlabels}${lines}${dots}</svg>${legend}`;
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(plainText(title))}">${grid}${xlabels}${lines}${dots}${hits}</svg>${legend}`;
 
   const svg = container.querySelector("svg");
-  svg.querySelectorAll("circle").forEach(dot => {
+  svg.querySelectorAll("circle[data-serie]").forEach(dot => {
     const si = +dot.dataset.serie;
     const s = series[si];
     const punto = ordered[si][+dot.dataset.i];
@@ -2797,8 +2821,16 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
       opts.tooltip ? opts.tooltip(punto, s)
         : `<strong>${escapeHtml(s.label)}</strong><br>${opts.formatX ? opts.formatX(+dot.dataset.x) : dot.dataset.x}: ${opts.formatY ? opts.formatY(+dot.dataset.y) : dot.dataset.y}`, evt));
     dot.addEventListener("mouseleave", hideTooltip);
+    if (dot.dataset.clic === "1") {
+      dot.addEventListener("click", () => { hideTooltip(); opts.onPointClick(punto, s); });
+    }
   });
 }
+
+// Un título puede llevar marcado (las migas de navegación del histórico de
+// merma), pero en aria-label hay que meter texto plano: las comillas del HTML
+// cerrarían el atributo y romperían la propia etiqueta <svg>.
+function plainText(s) { return String(s).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); }
 
 function truncate(s, n) { return s && s.length > n ? s.slice(0, n - 1) + "…" : (s || ""); }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -2943,6 +2975,80 @@ function mermaTimeline(rows, porSemana) {
   }));
 }
 
+function resetMermaDrill() {
+  state.ui.mermaDrill = { busqueda: null, semana: null, dia: null };
+}
+
+// Migas de pan del drill. Van dentro del título que recibe renderLineChart
+// (que lo interpola tal cual), así no hace falta otra caja en el layout.
+function mermaCrumbsHtml(drill, etiquetaSemana, etiquetaDia) {
+  if (!drill.semana && !drill.dia) return "";
+  const partes = [`<button class="ghost crumb" data-nivel="todo">↩ Todo el histórico</button>`];
+  if (drill.semana && drill.dia) partes.push(`<button class="ghost crumb" data-nivel="semana">${escapeHtml(etiquetaSemana)}</button>`);
+  partes.push(`<span class="crumb-actual">${escapeHtml(drill.dia ? etiquetaDia : etiquetaSemana)}</span>`);
+  return `<span class="merma-crumbs">${partes.join('<span class="crumb-sep">›</span>')}</span>`;
+}
+
+function wireMermaCrumbs(card) {
+  card.querySelectorAll("button.crumb").forEach(b => {
+    b.addEventListener("click", () => {
+      const d = state.ui.mermaDrill;
+      if (b.dataset.nivel === "todo") { d.semana = null; d.dia = null; }
+      else d.dia = null;
+      renderMermaArticulo();
+    });
+  });
+}
+
+// Las OF de un día concreto, ordenadas por kg de merma: responde "¿cuál de
+// estas órdenes me ha estropeado el día?", que es para lo que se baja hasta
+// aquí. Una OF puede venir partida en varias filas (tramos), así que se suma.
+function aggregateOfDia(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const key = r.of || "(sin OF)";
+    let g = map.get(key);
+    if (!g) { g = { of: key, linea: r.linea, producto: r.producto, desc: r.desc, kg: 0, mmpp: 0, mermaKg: 0, rows: [] }; map.set(key, g); }
+    g.kg += r.kg || 0; g.mmpp += r.mmpp || 0; g.mermaKg += r.mermaKg || 0;
+    g.rows.push(r);
+  }
+  return [...map.values()].map(g => {
+    const std = weightedMermaStdPct(g.rows);
+    const real = g.mmpp > 0 ? g.mermaKg / g.mmpp * 100 : null;
+    return {
+      ...g, real, std,
+      cobertura: stdCoverage(g.rows),
+      desviacion: (real !== null && std !== null) ? real - std : null
+    };
+  }).sort((a, b) => b.mermaKg - a.mermaKg);
+}
+
+function renderMermaOfDia(card, rows, titulo, crumbs) {
+  const ofs = aggregateOfDia(rows);
+  const totKg = sum(ofs, d => d.kg), totMerma = sum(ofs, d => d.mermaKg), totMmpp = sum(ofs, d => d.mmpp);
+  const totPct = totMmpp > 0 ? totMerma / totMmpp * 100 : null;
+  const filas = ofs.map(d => `
+    <tr>
+      <td>${escapeHtml(d.of)}</td>
+      <td>${escapeHtml(d.linea)}</td>
+      <td title="${escapeHtml(d.desc)}">${escapeHtml(truncate(d.desc || d.producto, 34))}</td>
+      <td>${fmtKg(d.kg)}</td>
+      <td>${fmtInt(d.mermaKg)} kg</td>
+      ${mermaCellHtml(d.real, d.std, d.desviacion, d.cobertura)}
+    </tr>`).join("");
+  card.innerHTML = `<h3>${titulo}${crumbs}</h3>
+    <p class="chart-sub">${ofs.length} OF · ${fmtKg(totKg)} encajados · ${fmtInt(totMerma)} kg de merma (${fmtPct(totPct)}) — ordenadas por kg de merma</p>
+    <div class="table-wrap" style="flex:1;min-height:0;overflow:auto;">
+      <table>
+        <thead><tr><th>OF</th><th>Línea</th><th>Artículo</th><th>Kg</th><th>Merma kg</th><th>Merma real</th><th>Merma std</th><th>Desviación</th></tr></thead>
+        <tbody>${filas}
+          <tr class="total-row"><td>TOTAL</td><td colspan="2"></td><td>${fmtKg(totKg)}</td><td>${fmtInt(totMerma)} kg</td><td>${fmtPct(totPct)}</td><td colspan="2"></td></tr>
+        </tbody>
+      </table>
+    </div>`;
+  wireMermaCrumbs(card);
+}
+
 function renderMermaArticulo() {
   const card = document.getElementById("chartMermaArticulo");
   const search = (document.getElementById("searchDetalle").value || "").trim();
@@ -2951,23 +3057,66 @@ function renderMermaArticulo() {
   if (!search || state.ui.detalleSub !== "articulo" || !state.productRows.length) { card.hidden = true; return; }
 
   const needle = search.toLowerCase();
-  const rows = getScopedRows().filter(r =>
+  const todas = getScopedRows().filter(r =>
     r.producto.toLowerCase().includes(needle) || r.desc.toLowerCase().includes(needle));
-  if (!rows.length) { card.hidden = true; return; }
+  if (!todas.length) { card.hidden = true; return; }
   card.hidden = false;
 
-  const productos = [...new Set(rows.map(r => r.producto))];
-  const dias = new Set(rows.map(r => r.periodo.getTime())).size;
-  // Con más de mes y medio de días sueltos la línea diaria se vuelve ilegible.
-  const porSemana = dias > 45;
+  // Un drill abierto sobre otra búsqueda ya no aplica.
+  const drill = state.ui.mermaDrill;
+  if (drill.busqueda !== search) { resetMermaDrill(); state.ui.mermaDrill.busqueda = search; }
+
+  const productos = [...new Set(todas.map(r => r.producto))];
+  const diasTotales = new Set(todas.map(r => r.periodo.getTime())).size;
+  // Con más de mes y medio de días sueltos la línea diaria se vuelve ilegible:
+  // arriba se agrupa por semana y se baja a los días al hacer clic.
+  const semanalArriba = diasTotales > 45;
+
+  const d = state.ui.mermaDrill;
+  let rows = todas, porSemana = semanalArriba;
+  let etiquetaSemana = "", etiquetaDia = "";
+  if (d.semana) {
+    rows = todas.filter(r => r.semana.key === d.semana);
+    porSemana = false;
+    const info = rows.length ? rows[0].semana : null;
+    etiquetaSemana = info ? `Semana ${info.week} · ${fmtDayShort(info.monday)}–${fmtDayShort(info.sunday)}` : d.semana;
+  }
+  if (d.dia) {
+    rows = rows.filter(r => r.periodo.getTime() === d.dia);
+    etiquetaDia = fmtDayLong(new Date(d.dia));
+  }
+  // Un drill que se queda sin filas (cambió el filtro de línea, p. ej.) vuelve
+  // arriba en vez de enseñar un panel vacío.
+  if (!rows.length) { resetMermaDrill(); state.ui.mermaDrill.busqueda = search; rows = todas; porSemana = semanalArriba; }
+
+  const crumbs = mermaCrumbsHtml(state.ui.mermaDrill, etiquetaSemana, etiquetaDia);
+  const tituloBase = productos.length === 1
+    ? `Histórico de merma · ${escapeHtml(productos[0])}`
+    : `Histórico de merma · ${productos.length} artículos`;
+
+  // Nivel 3: las OF del día elegido.
+  if (state.ui.mermaDrill.dia) { renderMermaOfDia(card, rows, tituloBase, crumbs); return; }
+
   const grano = porSemana ? "por semana" : "por día";
   const lineas = [...new Set(rows.map(r => r.linea))];
   const fmtX = x => porSemana ? "S" + isoWeekInfo(new Date(x)).week : fmtDayShort(new Date(x));
+  const pista = porSemana ? "clic para ver los días de esa semana" : "clic para ver las OF de ese día";
 
   const tooltipDe = (p, s) => `<strong>${escapeHtml(s.label)}</strong><br>${escapeHtml(p.etiqueta)}` +
     `<br>Merma: ${fmtPct(p.y)}` +
     (p.kg ? `<br>${fmtKg(p.kg)} encajados · ${fmtInt(p.mermaKg)} kg de merma` : "") +
-    (p.ofs ? `<br>${p.ofs} OF` : "");
+    (p.ofs ? `<br>${p.ofs} OF` : "") +
+    (s.dash ? "" : `<br><em>${pista}</em>`);
+
+  // Bajar un nivel: de semana a sus días, de día a sus OF. Desde la serie del
+  // estándar no se navega: es una referencia, no un dato con detalle detrás.
+  const alPulsar = (p, s) => {
+    if (s.dash) return;
+    const dd = state.ui.mermaDrill;
+    if (porSemana) dd.semana = isoWeekInfo(new Date(p.x)).key;
+    else { if (!dd.semana) dd.semana = isoWeekInfo(new Date(p.x)).key; dd.dia = p.x; }
+    renderMermaArticulo();
+  };
 
   if (productos.length === 1) {
     const serie = mermaTimeline(rows, porSemana);
@@ -2989,13 +3138,15 @@ function renderMermaArticulo() {
     const total = weightedMermaRealPct(rows), std = weightedMermaStdPct(rows);
     const desv = (hayStd && total !== null && std !== null) ? total - std : null;
     renderLineChart("chartMermaArticulo",
-      `Histórico de merma · ${escapeHtml(productos[0])}`,
-      `${escapeHtml(truncate(desc, 46))} — ${grano}, todo el histórico cargado (no solo el periodo de arriba) · ` +
+      tituloBase + crumbs,
+      `${escapeHtml(truncate(desc, 46))} — ${grano}, ` +
+      (state.ui.mermaDrill.semana ? "solo esta semana" : "todo el histórico cargado (no solo el periodo de arriba)") + " · " +
       `${lineas.length === 1 ? lineas[0] : lineas.length + " líneas"} · media ${fmtPct(total)}` +
       (desv !== null
         ? ` frente a ${fmtPct(std)} de estándar (${desv > 0 ? "+" : ""}${fmtPct(desv)})`
         : ` · sin rendimiento estándar definido en Mapex, no hay con qué compararla`),
-      series, { formatY: v => v.toFixed(1) + "%", formatX: fmtX, tooltip: tooltipDe, w: 900, h: 210 });
+      series, { formatY: v => v.toFixed(1) + "%", formatX: fmtX, tooltip: tooltipDe, w: 900, h: 210, onPointClick: alPulsar });
+    wireMermaCrumbs(card);
     return;
   }
 
@@ -3012,11 +3163,14 @@ function renderMermaArticulo() {
   })).filter(s => s.points.length);
 
   renderLineChart("chartMermaArticulo",
-    `Histórico de merma · ${productos.length} artículos`,
+    tituloBase + crumbs,
     `Coinciden ${productos.length} artículos con «${escapeHtml(search)}»` +
     (productos.length > 6 ? `; se muestran los 6 de más peso` : "") +
-    ` — ${grano}, todo el histórico cargado. Escribe el código exacto para ver uno solo con su estándar.`,
-    series, { formatY: v => v.toFixed(1) + "%", formatX: fmtX, tooltip: tooltipDe, w: 900, h: 210 });
+    ` — ${grano}, ` +
+    (state.ui.mermaDrill.semana ? "solo esta semana" : "todo el histórico cargado") +
+    `. Escribe el código exacto para ver uno solo con su estándar.`,
+    series, { formatY: v => v.toFixed(1) + "%", formatX: fmtX, tooltip: tooltipDe, w: 900, h: 210, onPointClick: alPulsar });
+  wireMermaCrumbs(card);
 }
 
 function renderTableOF(rows) {
@@ -3100,7 +3254,7 @@ function renderTableOF(rows) {
 
 // Un único buscador para artículo, OF y tramos: se escribe una vez y filtra las
 // tres tablas a la vez, se esté viendo la que se esté viendo.
-document.getElementById("searchDetalle").addEventListener("input", () => renderAll(true));
+document.getElementById("searchDetalle").addEventListener("input", () => { resetMermaDrill(); renderAll(true); });
 
 function setCount(id, text) {
   const el = document.getElementById(id);
@@ -3423,7 +3577,7 @@ function renderParetoChart(containerId, title, sub, items, opts = {}) {
   const dots = pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.6" fill="${cLine}"></circle>`).join("");
 
   container.innerHTML = `<h3>${title}</h3><p class="chart-sub">${sub}</p>
-    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}">
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(plainText(title))}">
       ${grid}${bars}
       <path d="${linePath}" fill="none" stroke="${cLine}" stroke-width="1.8" stroke-linejoin="round"></path>${dots}
     </svg>

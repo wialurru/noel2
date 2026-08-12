@@ -2672,11 +2672,26 @@ function renderAlertas(rows, ctRows) {
    ============================================================ */
 
 const tooltipEl = document.getElementById("tooltip");
+// El tooltip se pone por defecto abajo-derecha del cursor, pero si ahí no cabe
+// salta al lado contrario: pegado al borde inferior de la ventana se cortaba,
+// y justo los puntos más interesantes (los valles del gráfico) caen abajo.
+// Se mide DESPUÉS de meter el contenido, porque el alto depende de cuántas
+// líneas tenga cada tooltip.
 function showTooltip(html, evt) {
   tooltipEl.innerHTML = html;
   tooltipEl.style.opacity = "1";
-  tooltipEl.style.left = (evt.clientX + 14) + "px";
-  tooltipEl.style.top = (evt.clientY + 14) + "px";
+  const sep = 14, margen = 8;
+  const caja = tooltipEl.getBoundingClientRect();
+  const anchoVentana = window.innerWidth, altoVentana = window.innerHeight;
+  let x = evt.clientX + sep, y = evt.clientY + sep;
+  if (x + caja.width > anchoVentana - margen) x = evt.clientX - sep - caja.width;
+  if (y + caja.height > altoVentana - margen) y = evt.clientY - sep - caja.height;
+  // Con el cursor pegado a una esquina puede no caber a ningún lado: entonces
+  // se arrima al margen, que es preferible a quedar cortado.
+  x = Math.max(margen, Math.min(x, anchoVentana - margen - caja.width));
+  y = Math.max(margen, Math.min(y, altoVentana - margen - caja.height));
+  tooltipEl.style.left = x + "px";
+  tooltipEl.style.top = y + "px";
 }
 function hideTooltip() { tooltipEl.style.opacity = "0"; }
 

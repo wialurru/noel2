@@ -318,7 +318,7 @@ check("agrupar por semana no pierde ni duplica producción",
 function pintar(texto) {
   buscador.value = texto;
   tarjeta.innerHTML = "";
-  sandbox.renderMermaArticulo();
+  sandbox.renderGraficoArticulo();
   return { oculto: tarjeta.hidden, html: tarjeta.innerHTML };
 }
 
@@ -383,6 +383,81 @@ check("el título en aria-label va sin marcado (si no, rompería la etiqueta svg
 function fmtNum(n) { return Math.round(n * 100) / 100; }
 
 // Cero negativo: -0,004 kg no debe imprimirse como "-0 kg"
+/* ============================================================
+   Selector en cascada: Producción / Paradas
+   ============================================================ */
+
+console.log("\n--- Selector de métrica (Producción / Paradas) ---");
+state.ui.mermaDrill = { busqueda: null, semana: null, dia: null };
+const aplicar = ctx("aplicarMetricaSilenciosa");
+
+// Los motivos del tercer nivel salen de los datos, no de una lista escrita a
+// mano: si Mapex añade un motivo nuevo tiene que aparecer solo.
+const motAjustes = sandbox.motivosDe("ajustes");
+const motAverias = sandbox.motivosDe("averias");
+check("el menú saca los motivos de ajuste de los datos", motAjustes.length === 13, motAjustes.length + " motivos");
+check("y los de avería igual", motAverias.length === 2, motAverias.map(a => a.motivo).join(", "));
+check("vienen ordenados por tiempo parado, de mayor a menor",
+  motAjustes.every((m, i) => i === 0 || m.segundos <= motAjustes[i - 1].segundos) &&
+  motAjustes[0].motivo === "AJUSTE ETIQUETADORA", "el primero es " + motAjustes[0].motivo);
+check("ajustes y averías reparten el total sin solaparse",
+  Math.abs(sum(motAjustes, "segundos") + sum(motAverias, "segundos") - totalSeg) < 1e-9);
+
+// paroTimeline: minutos y nº de paradas por punto
+const parosArt = paroRows.filter(r => r.producto === "27752");
+const lineaParos = sandbox.paroTimeline(parosArt, false);
+check("paroTimeline hace un punto por día con paradas",
+  lineaParos.length === new Set(parosArt.map(r => r.periodo.getTime())).size, lineaParos.length + " puntos");
+check("los minutos de los puntos suman el total del artículo",
+  Math.abs(sum(lineaParos, "segundos") - sum(parosArt, "segundos")) < 1e-9,
+  fmtNum(sum(lineaParos, "segundos") / 60) + " min");
+check("cada punto cuenta bien sus paradas",
+  sum(lineaParos, "paradas") === parosArt.length, sum(lineaParos, "paradas") + " paradas");
+
+// Render de cada rama del selector
+for (const [ruta, espera] of [
+  [["prod", "uds"], "envases fabricados"],
+  [["prod", "kg"], "kg encajados"],
+  [["prod", "merma"], "merma"],
+  [["paros", "ajustes", null], "ajustes"],
+  [["paros", "ajustes", "AJUSTE ETIQUETADORA"], "AJUSTE ETIQUETADORA"]
+]) {
+  aplicar(ruta);
+  const r = pintar("27752");
+  check(`«${ruta.join(" › ")}» se dibuja y se titula bien`,
+    !r.oculto && r.html.includes(espera) && r.html.includes("<svg"), espera);
+}
+
+// Una categoría sin datos para ese artículo avisa en vez de dibujar un gráfico
+// vacío o quedarse con lo anterior en pantalla.
+aplicar(["paros", "averias", null]);
+const sinAverias = pintar("27752");
+check("una categoría sin paradas de ese artículo lo dice claramente",
+  !sinAverias.oculto && sinAverias.html.includes("Sin paradas") && !sinAverias.html.includes("<svg"));
+
+// El drill baja a las paradas una a una, no a las OF
+aplicar(["paros", "ajustes", null]);
+const diaConParos = parosArt[0].periodo.getTime();
+state.ui.mermaDrill = { busqueda: "27752", semana: parosArt[0].semana.key, dia: diaConParos };
+const paradasDia = pintar("27752");
+check("con una métrica de paradas, el día abre las paradas (no las OF)",
+  paradasDia.html.includes("Horario") && paradasDia.html.includes("Motivo") && !paradasDia.html.includes("Merma kg"));
+state.ui.mermaDrill = { busqueda: "27752", semana: parosArt[0].semana.key, dia: diaConParos };
+aplicar(["prod", "merma"]);
+check("con una métrica de producción, el mismo día abre las OF",
+  pintar("27752").html.includes("Merma kg"));
+
+// Si no hay His_Paro_Groups cargado, una métrica de paradas no puede dejar la
+// tarjeta muerta: tiene que caer sola a producción.
+state.ui.mermaDrill = { busqueda: null, semana: null, dia: null };
+aplicar(["paros", "ajustes", null]);
+const guardados = state.paroRows.splice(0, state.paroRows.length);
+pintar("27752");
+check("sin datos de paradas cargados, la métrica vuelve sola a Merma",
+  state.ui.metrica[0] === "prod", state.ui.metrica.join(" › "));
+guardados.forEach(r => state.paroRows.push(r));
+aplicar(["prod", "merma"]);
+
 const fmtIntCtx = ctx("fmtInt"), fmtPctCtx = ctx("fmtPct");
 check("un residuo negativo minúsculo se imprime como cero, no como -0",
   fmtIntCtx(-0.004) === "0" && fmtPctCtx(-0.0001) === "0,00 %",

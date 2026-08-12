@@ -197,6 +197,28 @@
   .merma-crumbs .crumb { padding: 1px 8px; font-size: 11.5px; }
   .merma-crumbs .crumb-sep { color: var(--text-muted); font-size: 11px; }
   .merma-crumbs .crumb-actual { font-size: 11.5px; color: var(--text-secondary); font-weight: 600; }
+
+  /* Menú en cascada del selector de gráfico: una columna por nivel */
+  .cascada { display: flex; gap: 8px; align-items: flex-start; max-width: min(660px, 82vw); overflow-x: auto; }
+  .cascada-col {
+    list-style: none; margin: 0; padding: 0; min-width: 150px; max-width: 250px; max-height: 300px; overflow-y: auto;
+    border-right: 1px solid var(--grid); padding-right: 8px; flex-shrink: 0;
+  }
+  .cascada-col button > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  .cascada-col:last-child { border-right: none; padding-right: 0; }
+  .cascada-col li { margin: 0; }
+  .cascada-col button {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    background: none; border: none; color: var(--text-primary); font-family: inherit; font-size: 12.5px;
+    padding: 6px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  }
+  .cascada-col button:hover:not(:disabled) { background: color-mix(in srgb, var(--s1) 10%, transparent); }
+  .cascada-col button.en-ruta { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+  .cascada-col button.elegido { background: var(--s1); color: #fff; font-weight: 600; }
+  .cascada-col button:disabled { opacity: .38; cursor: not-allowed; }
+  .cascada-col button .flecha { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+  .cascada-col button.elegido .flecha, .cascada-col button.elegido .medida { color: rgba(255,255,255,.75); }
+  .cascada-col button .medida { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .stack { display: grid; grid-template-rows: 1fr 1fr; gap: 12px; min-height: 0; }
   .row-controls { flex-shrink: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
@@ -728,6 +750,17 @@
           <button data-sub="articulo">Por artículo <span class="row-count" id="countArticulo"></span></button>
           <button data-sub="of">Por OF y tramos <span class="row-count" id="countOF"></span></button>
         </div>
+        <!-- Qué se pinta en el gráfico del artículo buscado. Vive aquí y no
+             dentro de la tarjeta porque .chart-card recorta lo que se sale. -->
+        <div class="pop-wrap" id="metricaWrap" hidden>
+          <button class="pop-btn" id="btnMetrica" aria-haspopup="true" aria-expanded="false">
+            <span class="k">Gráfico</span><span class="v" id="metricaLabel">Merma</span><span class="caret">▼</span>
+          </button>
+          <div class="pop-panel" id="popMetrica" hidden>
+            <h4>Qué mostrar de este artículo</h4>
+            <div class="cascada" id="cascadaMetrica"></div>
+          </div>
+        </div>
         <span class="row-count" id="detalleHint"></span>
       </div>
 
@@ -1211,7 +1244,9 @@ const state = {
     // Drill-down del histórico de merma: null = todo; con semana = los días de
     // esa semana; con día = las OF de ese día. `busqueda` recuerda para qué
     // texto se abrió, para no dejar un drill colgado al buscar otra cosa.
-    mermaDrill: { busqueda: null, semana: null, dia: null }
+    mermaDrill: { busqueda: null, semana: null, dia: null },
+    // Qué se pinta en el gráfico del artículo: [grupo, sub, motivo?]
+    metrica: ["prod", "merma"]
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -1341,7 +1376,7 @@ function saveSettings() {
 // Un solo popover abierto a la vez; se cierra con clic fuera o Esc.
 const POPOVERS = [
   ["btnPeriodo", "popPeriodo"], ["btnAlcance", "popAlcance"],
-  ["btnDatos", "popDatos"], ["btnAjustes", "popAjustes"]
+  ["btnDatos", "popDatos"], ["btnAjustes", "popAjustes"], ["btnMetrica", "popMetrica"]
 ];
 
 function closePopovers(exceptId) {
@@ -1370,6 +1405,13 @@ for (const [btnId, panelId] of POPOVERS) {
   });
   document.getElementById(panelId).addEventListener("click", e => e.stopPropagation());
 }
+// El menú en cascada se reconstruye al abrirlo, para que arranque siempre en la
+// rama de la métrica que está puesta y con los motivos que haya cargados.
+document.getElementById("btnMetrica").addEventListener("click", () => {
+  metricaExplorando = null;
+  renderCascada();
+});
+
 document.addEventListener("click", () => closePopovers(null));
 document.addEventListener("keydown", e => { if (e.key === "Escape") closePopovers(null); });
 
@@ -1412,7 +1454,7 @@ function setDetalleSub(sub) {
   document.querySelectorAll("#detalleSeg button").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
   document.querySelectorAll(".detalle-sub").forEach(g => g.classList.toggle("active", g.dataset.sub === sub));
   // El histórico del artículo solo vive en la sub-tabla de artículos.
-  renderMermaArticulo();
+  renderGraficoArticulo();
 }
 
 document.querySelectorAll("#detalleSeg button").forEach(btn => {
@@ -2235,6 +2277,15 @@ function getScopedRows() {
   return applyTurnoFilter(base, turno, PR_TURNO_FIELDS);
 }
 
+// Mismo alcance que getScopedRows pero para paradas: sin limitar por
+// Desde/Hasta, para que el histórico del artículo pueda mirar hacia atrás.
+function getScopedParoRows() {
+  const { areas, lineas, turno, dia } = state.filters;
+  return state.paroRows.filter(r =>
+    areas.has(r.area) && lineas.has(r.linea) && passesDiaFilter(r.periodo, dia) &&
+    (turno === "ambos" || r.turno === turno));
+}
+
 function getScopedCtRows() {
   const { lineas, turno, dia } = state.filters;
   const base = state.ctRows.filter(r => lineas.has(r.linea) && passesDiaFilter(r.periodo, dia));
@@ -2944,10 +2995,9 @@ function renderTableArticulo(data) {
    "cómo va este artículo en el periodo elegido" y esto responde "cómo se ha
    comportado siempre", que es la pregunta para la que no había respuesta. */
 
-// Agrupa por día o por semana y devuelve merma real y estándar ponderadas de
-// cada punto — mismo cálculo que las tablas (kg de merma / kg de MMPP), no un
-// promedio de porcentajes, que daría otro número.
-function mermaTimeline(rows, porSemana) {
+// Reparte cualquier lista de filas en puntos por día o por semana. Sirve igual
+// para filas de producción y de paradas: ambas traen `periodo` y `semana`.
+function agruparPorPeriodo(rows, porSemana) {
   const map = new Map();
   for (const r of rows) {
     const info = porSemana ? r.semana : null;
@@ -2961,7 +3011,14 @@ function mermaTimeline(rows, porSemana) {
     }
     map.get(key).rows.push(r);
   }
-  return [...map.values()].sort((a, b) => a.orden - b.orden).map(g => ({
+  return [...map.values()].sort((a, b) => a.orden - b.orden);
+}
+
+// Producción: merma real y estándar ponderadas de cada punto — mismo cálculo
+// que las tablas (kg de merma / kg de MMPP), no un promedio de porcentajes,
+// que daría otro número — más kg y unidades para las otras métricas.
+function mermaTimeline(rows, porSemana) {
+  return agruparPorPeriodo(rows, porSemana).map(g => ({
     x: g.orden,
     etiqueta: g.etiqueta,
     real: weightedMermaRealPct(g.rows),
@@ -2970,13 +3027,143 @@ function mermaTimeline(rows, porSemana) {
     // dibujaría un 0% como si el objetivo fuese cero merma.
     cobertura: stdCoverage(g.rows),
     kg: sum(g.rows, r => r.kg),
+    uds: sum(g.rows, r => r.udsCaja),
     mermaKg: sum(g.rows, r => r.mermaKg || 0),
     ofs: new Set(g.rows.map(r => r.of).filter(Boolean)).size
   }));
 }
 
+// Paradas: minutos parados y número de paradas por punto.
+function paroTimeline(rows, porSemana) {
+  return agruparPorPeriodo(rows, porSemana).map(g => {
+    const porMotivo = new Map();
+    for (const r of g.rows) porMotivo.set(r.motivo, (porMotivo.get(r.motivo) || 0) + r.segundos);
+    const top = [...porMotivo.entries()].sort((a, b) => b[1] - a[1])[0];
+    return {
+      x: g.orden, etiqueta: g.etiqueta,
+      segundos: sum(g.rows, r => r.segundos),
+      minutos: sum(g.rows, r => r.segundos) / 60,
+      paradas: g.rows.length,
+      motivoTop: top ? top[0] : "",
+      ofs: new Set(g.rows.map(r => r.of).filter(Boolean)).size
+    };
+  });
+}
+
 function resetMermaDrill() {
   state.ui.mermaDrill = { busqueda: null, semana: null, dia: null };
+}
+
+/* ---------- Selector en cascada de qué se pinta ----------
+   Producción › (Envases | Kg | Merma)   ·   Paradas › (Ajustes | Averías) › motivo
+   El tercer nivel sale de los motivos que traiga His_Paro_Groups, ordenados por
+   tiempo parado: no está escrito a mano, así que si Mapex añade un motivo nuevo
+   aparece solo. */
+const METRICA_GRUPOS = [
+  { id: "prod", label: "Producción" },
+  { id: "paros", label: "Paradas" }
+];
+const METRICA_SUBS = {
+  prod: [
+    { id: "uds", label: "Envases fabricados" },
+    { id: "kg", label: "Kg encajados" },
+    { id: "merma", label: "Merma (%)" }
+  ],
+  paros: [
+    { id: "ajustes", label: "Ajustes" },
+    { id: "averias", label: "Averías" }
+  ]
+};
+const SUB_LABEL = { uds: "Envases fabricados", kg: "Kg encajados", merma: "Merma (%)", ajustes: "Ajustes", averias: "Averías" };
+
+function motivosDe(categoria, paroRows) {
+  const esAv = categoria === "averias";
+  const m = new Map();
+  for (const r of (paroRows || state.paroRows)) {
+    if (r.esAveria !== esAv) continue;
+    m.set(r.motivo, (m.get(r.motivo) || 0) + r.segundos);
+  }
+  return [...m.entries()].map(([motivo, segundos]) => ({ motivo, segundos }))
+    .sort((a, b) => b.segundos - a.segundos);
+}
+
+function metricaEsParos() { return state.ui.metrica[0] === "paros"; }
+
+function metricaTexto(path) {
+  const [g, s, m] = path;
+  if (m) return truncate(m.replace(/^AJUSTE |^AVER[ÍI]A /i, ""), 22);
+  return SUB_LABEL[s] || METRICA_GRUPOS.find(x => x.id === g).label;
+}
+
+// Ruta que se está hojeando en el menú; al cerrarlo vuelve a la seleccionada.
+let metricaExplorando = null;
+
+function renderCascada() {
+  const cont = document.getElementById("cascadaMetrica");
+  const sel = state.ui.metrica;
+  const exp = metricaExplorando || sel;
+  const hayParos = state.paroRows.length > 0;
+
+  const col = (items, nivel) => `<ul class="cascada-col" data-nivel="${nivel}">` + items.map(it => {
+    const enRuta = exp[nivel] === it.id;
+    const elegido = sel[nivel] === it.id && sel.slice(0, nivel + 1).join("|") === exp.slice(0, nivel + 1).join("|") && (nivel === 2 || !it.tieneHijos);
+    return `<li><button data-nivel="${nivel}" data-id="${escapeHtml(it.id)}"${it.deshabilitado ? " disabled" : ""}` +
+      (it.title ? ` title="${escapeHtml(it.title)}"` : "") +
+      ` class="${elegido ? "elegido" : enRuta ? "en-ruta" : ""}">` +
+      `<span>${escapeHtml(it.label)}</span>` +
+      (it.medida ? `<span class="medida">${it.medida}</span>` : "") +
+      (it.tieneHijos ? `<span class="flecha">›</span>` : "") +
+      `</button></li>`;
+  }).join("") + `</ul>`;
+
+  let html = col(METRICA_GRUPOS.map(g => ({
+    id: g.id, label: g.label, tieneHijos: true,
+    deshabilitado: g.id === "paros" && !hayParos,
+    title: g.id === "paros" && !hayParos ? "Necesita el CSV His_Paro_Groups" : ""
+  })), 0);
+
+  const subs = METRICA_SUBS[exp[0]] || [];
+  html += col(subs.map(s => ({ id: s.id, label: s.label, tieneHijos: exp[0] === "paros" })), 1);
+
+  if (exp[0] === "paros" && exp[1]) {
+    const motivos = motivosDe(exp[1]);
+    html += col([{ id: "", label: exp[1] === "averias" ? "Todas las averías" : "Todos los ajustes", medida: fmtDur(sum(motivos, m => m.segundos)) }]
+      .concat(motivos.map(m => ({ id: m.motivo, label: m.motivo, title: m.motivo, medida: fmtDur(m.segundos) }))), 2);
+  }
+  cont.innerHTML = html;
+
+  cont.querySelectorAll("button[data-nivel]").forEach(b => {
+    b.addEventListener("click", () => {
+      const nivel = +b.dataset.nivel, id = b.dataset.id;
+      if (nivel === 0) {
+        // Solo hojear: aún no hay métrica completa que aplicar.
+        metricaExplorando = [id, (METRICA_SUBS[id][0] || {}).id];
+        if (id === "paros") metricaExplorando = [id, "ajustes"];
+        renderCascada();
+        return;
+      }
+      if (nivel === 1 && exp[0] === "paros") { metricaExplorando = ["paros", id]; renderCascada(); return; }
+      const ruta = nivel === 1 ? [exp[0], id] : ["paros", exp[1], id || null];
+      aplicarMetrica(ruta);
+    });
+  });
+}
+
+// Cambia la métrica sin repintar: la usa el propio render cuando la elegida
+// ha dejado de tener sentido (p. ej. ya no hay datos de paradas cargados).
+function aplicarMetricaSilenciosa(ruta) {
+  state.ui.metrica = ruta;
+  metricaExplorando = null;
+}
+
+function aplicarMetrica(ruta) {
+  state.ui.metrica = ruta;
+  metricaExplorando = null;
+  // El drill de tiempo (semana/día) sigue siendo válido al cambiar de métrica:
+  // se mira lo mismo en otro indicador, no hace falta volver arriba.
+  closePopovers(null);
+  document.getElementById("metricaLabel").textContent = metricaTexto(ruta);
+  renderGraficoArticulo();
 }
 
 // Migas de pan del drill. Van dentro del título que recibe renderLineChart
@@ -2995,7 +3182,7 @@ function wireMermaCrumbs(card) {
       const d = state.ui.mermaDrill;
       if (b.dataset.nivel === "todo") { d.semana = null; d.dia = null; }
       else d.dia = null;
-      renderMermaArticulo();
+      renderGraficoArticulo();
     });
   });
 }
@@ -3049,25 +3236,72 @@ function renderMermaOfDia(card, rows, titulo, crumbs) {
   wireMermaCrumbs(card);
 }
 
-function renderMermaArticulo() {
+// Las paradas concretas de un día: a qué hora, cuánto y por qué. Es el fondo
+// del drill cuando se está mirando una métrica de paradas.
+function renderParadasDia(card, paros, titulo, crumbs) {
+  const orden = paros.slice().sort((a, b) => b.segundos - a.segundos);
+  const totalSeg = sum(orden, r => r.segundos);
+  const hora = d => d ? String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0") : "—";
+  const filas = orden.map(r => `
+    <tr>
+      <td>${hora(r.inicio)}–${hora(r.fin)}</td>
+      <td>${escapeHtml(r.turnoRaw)}</td>
+      <td title="${escapeHtml(r.motivo)}">${escapeHtml(truncate(r.motivo, 30))}</td>
+      <td>${r.esAveria ? '<span class="pill bad">avería</span>' : '<span class="pill neutral">ajuste</span>'}</td>
+      <td>${escapeHtml(r.of)}</td>
+      <td>${escapeHtml(r.linea)}</td>
+      <td>${fmtInt(r.segundos / 60)} min</td>
+    </tr>`).join("");
+  card.innerHTML = `<h3>${titulo}${crumbs}</h3>
+    <p class="chart-sub">${fmtInt(orden.length)} paradas · ${fmtDur(totalSeg)} parados — ordenadas por duración</p>
+    <div class="table-wrap" style="flex:1;min-height:0;overflow:auto;">
+      <table>
+        <thead><tr><th>Horario</th><th>Turno</th><th>Motivo</th><th>Tipo</th><th>OF</th><th>Línea</th><th>Duración</th></tr></thead>
+        <tbody>${filas}
+          <tr class="total-row"><td>TOTAL</td><td colspan="5"></td><td>${fmtInt(totalSeg / 60)} min</td></tr>
+        </tbody>
+      </table>
+    </div>`;
+  wireMermaCrumbs(card);
+}
+
+function renderGraficoArticulo() {
   const card = document.getElementById("chartMermaArticulo");
+  const wrap = document.getElementById("metricaWrap");
   const search = (document.getElementById("searchDetalle").value || "").trim();
   // Solo tiene sentido en la sub-tabla de artículos: la de OF va por orden de
   // fabricación, no por artículo.
-  if (!search || state.ui.detalleSub !== "articulo" || !state.productRows.length) { card.hidden = true; return; }
+  if (!search || state.ui.detalleSub !== "articulo" || !state.productRows.length) { card.hidden = true; wrap.hidden = true; return; }
 
   const needle = search.toLowerCase();
-  const todas = getScopedRows().filter(r =>
-    r.producto.toLowerCase().includes(needle) || r.desc.toLowerCase().includes(needle));
-  if (!todas.length) { card.hidden = true; return; }
-  card.hidden = false;
+  const coincide = r => r.producto.toLowerCase().includes(needle) || r.desc.toLowerCase().includes(needle);
+  const todas = getScopedRows().filter(coincide);
+  if (!todas.length) { card.hidden = true; wrap.hidden = true; return; }
+  card.hidden = false; wrap.hidden = false;
+  // Si se descarga His_Paro_Groups y luego se recarga sin él, una métrica de
+  // paradas seleccionada antes dejaría el gráfico vacío para siempre.
+  if (metricaEsParos() && !state.paroRows.length) aplicarMetricaSilenciosa(["prod", "merma"]);
+  document.getElementById("metricaLabel").textContent = metricaTexto(state.ui.metrica);
 
   // Un drill abierto sobre otra búsqueda ya no aplica.
   const drill = state.ui.mermaDrill;
   if (drill.busqueda !== search) { resetMermaDrill(); state.ui.mermaDrill.busqueda = search; }
 
   const productos = [...new Set(todas.map(r => r.producto))];
-  const diasTotales = new Set(todas.map(r => r.periodo.getTime())).size;
+  const met = state.ui.metrica;
+
+  // Todas las paradas del artículo (His_Paro_Groups trae el SKU), ya acotadas
+  // a la categoría/motivo elegidos pero todavía sin recortar por el drill.
+  const esAv = met[1] === "averias";
+  const todosParos = (state.paroRows.length ? getScopedParoRows().filter(coincide) : [])
+    .filter(r => met[0] !== "paros" || (r.esAveria === esAv && (!met[2] || r.motivo === met[2])));
+
+  // La granularidad se decide sobre los datos QUE SE VAN A PINTAR, no sobre la
+  // producción siempre: His_Paro_Groups suele cubrir muchas menos semanas que
+  // ProductReport, y agrupar sus paradas por semana dejaba el gráfico con un
+  // único punto aunque hubiera cinco días de datos.
+  const baseGrano = metricaEsParos() ? todosParos : todas;
+  const diasTotales = new Set(baseGrano.map(r => r.periodo.getTime())).size;
   // Con más de mes y medio de días sueltos la línea diaria se vuelve ilegible:
   // arriba se agrupa por semana y se baja a los días al hacer clic.
   const semanalArriba = diasTotales > 45;
@@ -3089,18 +3323,33 @@ function renderMermaArticulo() {
   // arriba en vez de enseñar un panel vacío.
   if (!rows.length) { resetMermaDrill(); state.ui.mermaDrill.busqueda = search; rows = todas; porSemana = semanalArriba; }
 
-  const crumbs = mermaCrumbsHtml(state.ui.mermaDrill, etiquetaSemana, etiquetaDia);
-  const tituloBase = productos.length === 1
-    ? `Histórico de merma · ${escapeHtml(productos[0])}`
-    : `Histórico de merma · ${productos.length} artículos`;
+  // Mismo recorte de semana/día que la producción.
+  const dAct = state.ui.mermaDrill;
+  let paros = todosParos;
+  if (dAct.semana) paros = paros.filter(r => r.semana.key === dAct.semana);
+  if (dAct.dia) paros = paros.filter(r => r.periodo.getTime() === dAct.dia);
 
-  // Nivel 3: las OF del día elegido.
-  if (state.ui.mermaDrill.dia) { renderMermaOfDia(card, rows, tituloBase, crumbs); return; }
+  const crumbs = mermaCrumbsHtml(state.ui.mermaDrill, etiquetaSemana, etiquetaDia);
+  const queMide = metricaEsParos()
+    ? (met[2] ? met[2] : (met[1] === "averias" ? "averías" : "ajustes"))
+    : { uds: "envases fabricados", kg: "kg encajados", merma: "merma" }[met[1]];
+  const tituloBase = productos.length === 1
+    ? `${escapeHtml(productos[0])} · ${escapeHtml(queMide)}`
+    : `${productos.length} artículos · ${escapeHtml(queMide)}`;
+
+  // Nivel 3: el detalle del día — las paradas una a una, o las OF.
+  if (state.ui.mermaDrill.dia) {
+    if (metricaEsParos()) renderParadasDia(card, paros, tituloBase, crumbs);
+    else renderMermaOfDia(card, rows, tituloBase, crumbs);
+    return;
+  }
 
   const grano = porSemana ? "por semana" : "por día";
   const lineas = [...new Set(rows.map(r => r.linea))];
   const fmtX = x => porSemana ? "S" + isoWeekInfo(new Date(x)).week : fmtDayShort(new Date(x));
-  const pista = porSemana ? "clic para ver los días de esa semana" : "clic para ver las OF de ese día";
+  const fondo = metricaEsParos() ? "las paradas de ese día" : "las OF de ese día";
+  const pista = porSemana ? "clic para ver los días de esa semana" : "clic para ver " + fondo;
+  const alcance = state.ui.mermaDrill.semana ? "solo esta semana" : "todo el histórico cargado (no solo el periodo de arriba)";
 
   const tooltipDe = (p, s) => `<strong>${escapeHtml(s.label)}</strong><br>${escapeHtml(p.etiqueta)}` +
     `<br>Merma: ${fmtPct(p.y)}` +
@@ -3108,15 +3357,66 @@ function renderMermaArticulo() {
     (p.ofs ? `<br>${p.ofs} OF` : "") +
     (s.dash ? "" : `<br><em>${pista}</em>`);
 
-  // Bajar un nivel: de semana a sus días, de día a sus OF. Desde la serie del
-  // estándar no se navega: es una referencia, no un dato con detalle detrás.
+  // Bajar un nivel: de semana a sus días, y de día al detalle. Desde la serie
+  // del estándar no se navega: es una referencia, no un dato con detalle detrás.
   const alPulsar = (p, s) => {
     if (s.dash) return;
     const dd = state.ui.mermaDrill;
     if (porSemana) dd.semana = isoWeekInfo(new Date(p.x)).key;
     else { if (!dd.semana) dd.semana = isoWeekInfo(new Date(p.x)).key; dd.dia = p.x; }
-    renderMermaArticulo();
+    renderGraficoArticulo();
   };
+  const opcionesLinea = { formatX: fmtX, w: 900, h: 210, onPointClick: alPulsar };
+
+  // --- Paradas ------------------------------------------------------------
+  if (metricaEsParos()) {
+    const serie = paroTimeline(paros, porSemana);
+    const totalSeg = sum(paros, r => r.segundos);
+    const color = met[1] === "averias" ? cssVar("--critical") : cssVar("--s2");
+    if (!paros.length) {
+      card.innerHTML = `<h3>${tituloBase}${crumbs}</h3>
+        <p class="chart-sub">${escapeHtml(queMide)} de este artículo, ${alcance}</p>
+        <p class="empty-note">Sin paradas de <strong>${escapeHtml(queMide)}</strong> para este artículo en el histórico cargado.<br>
+        His_Paro_Groups solo cubre las líneas y fechas de los cortes que hayas subido.</p>`;
+      wireMermaCrumbs(card);
+      return;
+    }
+    renderLineChart("chartMermaArticulo", tituloBase + crumbs,
+      `${fmtDur(totalSeg)} parados en ${fmtInt(paros.length)} paradas — ${grano}, ${alcance} · ` +
+      `${lineas.length === 1 ? lineas[0] : lineas.length + " líneas"}`,
+      [{ label: SUB_LABEL[met[1]] + (met[2] ? " · " + met[2] : ""), color, dash: null,
+        points: serie.map(p => ({ x: p.x, y: p.minutos, etiqueta: p.etiqueta, paradas: p.paradas, segundos: p.segundos, motivoTop: p.motivoTop, ofs: p.ofs })) }],
+      Object.assign({}, opcionesLinea, {
+        formatY: v => fmtInt(v) + " min",
+        tooltip: (p, s) => `<strong>${escapeHtml(s.label)}</strong><br>${escapeHtml(p.etiqueta)}` +
+          `<br>${fmtDur(p.segundos)} en ${fmtInt(p.paradas)} paradas` +
+          (p.motivoTop && !met[2] ? `<br>Principal: ${escapeHtml(p.motivoTop)}` : "") +
+          (p.ofs ? `<br>${p.ofs} OF afectadas` : "") + `<br><em>${pista}</em>`
+      }));
+    wireMermaCrumbs(card);
+    return;
+  }
+
+  // --- Producción: envases o kg -------------------------------------------
+  if (met[1] === "uds" || met[1] === "kg") {
+    const esUds = met[1] === "uds";
+    const serie = mermaTimeline(rows, porSemana);
+    const total = sum(rows, r => esUds ? r.udsCaja : r.kg);
+    renderLineChart("chartMermaArticulo", tituloBase + crumbs,
+      `${escapeHtml(truncate(rows[0].desc, 46))} — ${grano}, ${alcance} · ` +
+      `${lineas.length === 1 ? lineas[0] : lineas.length + " líneas"} · ` +
+      `total ${esUds ? fmtInt(total) + " envases" : fmtKg(total)}`,
+      [{ label: SUB_LABEL[met[1]], color: cssVar(esUds ? "--s3" : "--s1"), dash: null,
+        points: serie.map(p => ({ x: p.x, y: esUds ? p.uds : p.kg, etiqueta: p.etiqueta, kg: p.kg, uds: p.uds, ofs: p.ofs })) }],
+      Object.assign({}, opcionesLinea, {
+        formatY: v => esUds ? fmtInt(v) : fmtInt(v),
+        tooltip: (p, s) => `<strong>${escapeHtml(s.label)}</strong><br>${escapeHtml(p.etiqueta)}` +
+          `<br>${fmtInt(p.uds)} envases · ${fmtKg(p.kg)}` +
+          (p.ofs ? `<br>${p.ofs} OF` : "") + `<br><em>${pista}</em>`
+      }));
+    wireMermaCrumbs(card);
+    return;
+  }
 
   if (productos.length === 1) {
     const serie = mermaTimeline(rows, porSemana);
@@ -3139,8 +3439,7 @@ function renderMermaArticulo() {
     const desv = (hayStd && total !== null && std !== null) ? total - std : null;
     renderLineChart("chartMermaArticulo",
       tituloBase + crumbs,
-      `${escapeHtml(truncate(desc, 46))} — ${grano}, ` +
-      (state.ui.mermaDrill.semana ? "solo esta semana" : "todo el histórico cargado (no solo el periodo de arriba)") + " · " +
+      `${escapeHtml(truncate(desc, 46))} — ${grano}, ${alcance} · ` +
       `${lineas.length === 1 ? lineas[0] : lineas.length + " líneas"} · media ${fmtPct(total)}` +
       (desv !== null
         ? ` frente a ${fmtPct(std)} de estándar (${desv > 0 ? "+" : ""}${fmtPct(desv)})`
@@ -3166,9 +3465,7 @@ function renderMermaArticulo() {
     tituloBase + crumbs,
     `Coinciden ${productos.length} artículos con «${escapeHtml(search)}»` +
     (productos.length > 6 ? `; se muestran los 6 de más peso` : "") +
-    ` — ${grano}, ` +
-    (state.ui.mermaDrill.semana ? "solo esta semana" : "todo el histórico cargado") +
-    `. Escribe el código exacto para ver uno solo con su estándar.`,
+    ` — ${grano}, ${alcance}. Escribe el código exacto para ver uno solo con su estándar.`,
     series, { formatY: v => v.toFixed(1) + "%", formatX: fmtX, tooltip: tooltipDe, w: 900, h: 210, onPointClick: alPulsar });
   wireMermaCrumbs(card);
 }
@@ -4148,7 +4445,7 @@ function renderAll(skipFilters) {
   renderTableLinea(porLinea);
   renderTableArticulo(porArticulo);
   renderTableOF(rows);
-  renderMermaArticulo();
+  renderGraficoArticulo();
 
   const ctFiltered = state.ctRows.length ? getFilteredCtRows() : [];
   if (state.ctRows.length) {

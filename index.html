@@ -1299,8 +1299,9 @@ const state = {
     mermaDrill: { busqueda: null, semana: null, dia: null },
     // Qué se pinta en el gráfico del artículo: [grupo, sub, motivo?]
     metrica: ["prod", "merma"],
-    // Indicador del gráfico de tendencia diaria del Resumen
-    tendencia: "prod.merma"
+    // Indicador del gráfico de tendencia del Resumen y cada cuánto se agrupa
+    tendencia: "prod.merma",
+    tendenciaGrano: "auto"
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -3029,6 +3030,12 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
   // transparente más grande que es la que recibe hover y clic: acertar en un
   // punto de 4px con el ratón es incómodo, y agrandar el punto visible
   // emborronaría la línea.
+  // Con muchas fechas los puntos dejan de ayudar y ensucian: se tocan entre sí
+  // y la línea desaparece bajo ellos. A partir de cierta densidad se dibuja
+  // solo la línea, y el área de clic se encoge para que no se solapen todas.
+  const separacion = xs.length > 1 ? (w - padL - padR) / (xs.length - 1) : 999;
+  const puntosVisibles = opts.dots !== undefined ? opts.dots : separacion >= 11;
+  const rHit = Math.max(3, Math.min(11, separacion / 2));
   let lines = "", dots = "", hits = "";
   const ordered = [];
   series.forEach((s, si) => {
@@ -3043,8 +3050,8 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
     const clicable = !!opts.onPointClick && !s.dash;
     pts.forEach((p, pi) => {
       const cx = xScale(p.x).toFixed(1), cy = yScale(p.y).toFixed(1);
-      dots += `<circle cx="${cx}" cy="${cy}" r="${s.dash ? 2.5 : 4}" fill="${s.color}" stroke="${cssVar("--surface-1")}" stroke-width="${s.dash ? 1 : 2}" style="pointer-events:none;"></circle>`;
-      hits += `<circle data-serie="${si}" data-i="${pi}" data-clic="${clicable ? 1 : 0}" cx="${cx}" cy="${cy}" r="${clicable ? 11 : 6}" fill="transparent" style="cursor:${clicable ? "pointer" : "default"};"></circle>`;
+      if (puntosVisibles) dots += `<circle cx="${cx}" cy="${cy}" r="${s.dash ? 2.5 : 4}" fill="${s.color}" stroke="${cssVar("--surface-1")}" stroke-width="${s.dash ? 1 : 2}" style="pointer-events:none;"></circle>`;
+      hits += `<circle data-serie="${si}" data-i="${pi}" data-clic="${clicable ? 1 : 0}" cx="${cx}" cy="${cy}" r="${(clicable ? Math.max(rHit, 5) : rHit).toFixed(1)}" fill="transparent" style="cursor:${clicable ? "pointer" : "default"};"></circle>`;
     });
   });
 
@@ -4728,6 +4735,39 @@ const TENDENCIA_FMT = {
   min: v => fmtInt(v) + "m"
 };
 
+/* Granularidad del eje. Con 220 días y 6 líneas salían 1.300 puntos encima de
+   la línea y el gráfico no se leía. Agrupando, un año cabe en ~12 puntos.
+   Los cortes están puestos donde el gráfico deja de respirar: hasta ~35 fechas
+   se distinguen los puntos, hasta ~35 semanas también, y de ahí a meses. */
+const TENDENCIA_GRANOS = { auto: "Automático", dia: "Por día", semana: "Por semana", mes: "Por mes" };
+
+function granoAuto(nDias) {
+  if (nDias <= 35) return "dia";
+  if (nDias <= 240) return "semana";
+  return "mes";
+}
+
+function clavePeriodo(fecha, grano) {
+  if (grano === "mes") {
+    const key = monthKeyOf(fecha);
+    return { key, orden: monthOrderOf(fecha), etiqueta: monthTitleLabel(key) };
+  }
+  if (grano === "semana") {
+    const i = isoWeekInfo(fecha);
+    return { key: i.key, orden: i.monday.getTime(), etiqueta: "Semana " + i.week + " · " + fmtDayShort(i.monday) + "–" + fmtDayShort(i.sunday) };
+  }
+  return { key: fecha.getTime(), orden: fecha.getTime(), etiqueta: fmtDayLong(fecha) };
+}
+
+function tendenciaGranoSelectHtml(efectivo) {
+  const actual = state.ui.tendenciaGrano || "auto";
+  return `<select class="chart-metrica" id="tendenciaGrano" title="Cada cuánto se agrupa el eje de tiempo">` +
+    Object.entries(TENDENCIA_GRANOS).map(([id, label]) =>
+      `<option value="${id}"${id === actual ? " selected" : ""}>` +
+      escapeHtml(id === "auto" ? `Automático (${TENDENCIA_GRANOS[efectivo].toLowerCase()})` : label) +
+      `</option>`).join("") + `</select>`;
+}
+
 function renderTendencia(rows, porLinea) {
   let id = state.ui.tendencia;
   // Si se elige un indicador y luego se recarga sin el CSV que lo alimenta,
@@ -4751,28 +4791,35 @@ function renderTendencia(rows, porLinea) {
     topLineas = porLinea.slice(0, 6).map(d => d.linea);
   }
 
-  const dia = d => d.getTime();
-  // Un punto por línea y día, con lo que necesite cada indicador.
+  // Cuántas fechas distintas hay en juego decide si se agrupa por día, semana
+  // o mes cuando el usuario lo deja en automático.
+  const fuente = esParos ? paros : rows;
+  const nDias = new Set(fuente.map(r => r.periodo.getTime())).size;
+  const granoElegido = state.ui.tendenciaGrano || "auto";
+  const grano = granoElegido === "auto" ? granoAuto(nDias) : granoElegido;
+
+  // Un punto por línea y periodo, con lo que necesite cada indicador.
   const celdas = new Map();
-  const dame = (linea, d) => {
-    const k = linea + "||" + d;
-    if (!celdas.has(k)) celdas.set(k, { linea, day: d, mmpp: 0, mermaKg: 0, kg: 0, uds: 0, sobreKg: 0, marcha: 0, penaliza: 0, seg: 0 });
+  const dame = (linea, fecha) => {
+    const p = clavePeriodo(fecha, grano);
+    const k = linea + "||" + p.key;
+    if (!celdas.has(k)) celdas.set(k, { linea, day: p.orden, etiqueta: p.etiqueta, mmpp: 0, mermaKg: 0, kg: 0, uds: 0, sobreKg: 0, marcha: 0, penaliza: 0, seg: 0 });
     return celdas.get(k);
   };
   for (const r of rows) {
     if (!topLineas.includes(r.linea)) continue;
-    const g = dame(r.linea, dia(r.periodo));
+    const g = dame(r.linea, r.periodo);
     g.kg += r.kg || 0; g.uds += r.udsCaja || 0;
     g.sobreKg += r.sobrepesoKg || 0;
     if (r.aplicaStd) { g.mmpp += r.mmpp; g.mermaKg += r.mermaKg || 0; }
   }
   if (id === "disp") for (const r of ct) {
     if (!topLineas.includes(r.linea)) continue;
-    dame(r.linea, dia(r.periodo)).marcha += r.m || 0;
+    dame(r.linea, r.periodo).marcha += r.m || 0;
   }
   if (id === "disp" || esParos) for (const r of paros) {
     if (!topLineas.includes(r.linea)) continue;
-    const g = dame(r.linea, dia(r.periodo));
+    const g = dame(r.linea, r.periodo);
     if (r.categoria !== "tnd") g.penaliza += r.segundos;
     if (esParos && (id === "paros.todas" || id === "paros." + r.categoria)) g.seg += r.segundos;
   }
@@ -4797,18 +4844,26 @@ function renderTendencia(rows, porLinea) {
   })).filter(s => s.points.length);
 
   const fmtY = TENDENCIA_FMT[met.eje];
+  const puntosPorSerie = Math.max(0, ...series.map(s => s.points.length));
   const sub = (esParos
     ? "Líneas con más tiempo parado en la selección (máx. 6)"
     : "Líneas con más producción en la selección (máx. 6)") +
     (id === "prod.merma" ? ", solo artículos con estándar" : "") +
-    (id === "disp" ? " — marcha ÷ (marcha + PNP + PP + AV), TND excluido" : "");
+    (id === "disp" ? " — marcha ÷ (marcha + PNP + PP + AV), TND excluido" : "") +
+    ` · ${fmtInt(nDias)} días agrupados en ${fmtInt(puntosPorSerie)} ${grano === "dia" ? "días" : grano === "semana" ? "semanas" : "meses"}`;
+
+  const fmtX = x => {
+    const d = new Date(x);
+    if (grano === "mes") return MONTH_ABBR[d.getUTCMonth()] + " " + String(d.getUTCFullYear()).slice(2);
+    if (grano === "semana") return "S" + isoWeekInfo(d).week;
+    return fmtDayShort(d);
+  };
 
   renderLineChart("chartTendencia",
-    `Tendencia diaria · ${tendenciaSelectHtml()}`, sub, series,
-    { formatY: fmtY,
-      formatX: x => new Date(x).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", timeZone: "UTC" }),
+    `Tendencia · ${tendenciaSelectHtml()} ${tendenciaGranoSelectHtml(granoAuto(nDias))}`, sub, series,
+    { formatY: fmtY, formatX: fmtX,
       tooltip: (p, s) => `<strong>${escapeHtml(s.label)}</strong><br>` +
-        fmtDayLong(new Date(p.x)) + `<br>${escapeHtml(met.label)}: ` +
+        escapeHtml(p.g.etiqueta) + `<br>${escapeHtml(met.label)}: ` +
         (met.eje === "min" ? fmtDur(p.g.seg) : met.eje === "kg" ? fmtKg(p.y) : met.eje === "int" ? fmtInt(p.y) + " envases" : fmtPct(p.y)) +
         (p.g.kg && !esParos && id !== "prod.kg" ? `<br>${fmtKg(p.g.kg)} encajados` : "")
     });
@@ -4816,6 +4871,11 @@ function renderTendencia(rows, porLinea) {
   const sel = document.getElementById("tendenciaSel");
   if (sel) sel.addEventListener("change", () => {
     state.ui.tendencia = sel.value;
+    renderTendencia(rows, porLinea);
+  });
+  const selG = document.getElementById("tendenciaGrano");
+  if (selG) selG.addEventListener("change", () => {
+    state.ui.tendenciaGrano = selG.value;
     renderTendencia(rows, porLinea);
   });
 }

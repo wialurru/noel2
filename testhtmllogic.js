@@ -30,7 +30,7 @@ const ids = ["dz1","file1","status1","dz2","file2","status2","dz3","file3","stat
   "ajustesBody","periodoControls","periodoLabel","alcanceLabel","histSliderActive","histLevelTurno","app",
   "paroKpiRow","motivosGrid","motivosEmpty","chartParetoMotivos","chartParosLinea","tableParoOf","countParoOf","parosHint",
   "autoStatus","folderInput","btnCargarCarpeta","btnCargarCarpetaTop","chartMermaArticulo",
-  "paroResumen","paroCatSeg","paroCatTitulo","metricaWrap","metricaLabel","cascadaMetrica","chartProduccionTurno","tableTurno","tendenciaSel"];
+  "paroResumen","paroCatSeg","paroCatTitulo","metricaWrap","metricaLabel","cascadaMetrica","chartProduccionTurno","tableTurno","tendenciaSel","tendenciaGrano"];
 const elMap = {};
 ids.forEach(id => elMap[id] = stubEl());
 
@@ -705,6 +705,71 @@ const marchaD = sum(ctD, "m"), penD = sum(paD.filter(r => r.categoria !== "tnd")
 check("la disponibilidad diaria del gráfico coincide con marcha/(marcha+paros)",
   espDia === null || Math.abs(espDia.pct - 100 * marchaD / (marchaD + penD)) < 1e-9,
   unaL + " el " + new Date(unDia).toISOString().slice(0, 10) + ": " + fmtNum(100 * marchaD / (marchaD + penD)) + " %");
+state.ui.tendencia = "prod.merma";
+
+/* ============================================================
+   Agrupado del eje de tiempo (día / semana / mes)
+   ============================================================ */
+
+console.log("\n=== Agrupado de la tendencia ===");
+const granoAuto = ctx("granoAuto");
+const clavePeriodo = ctx("clavePeriodo");
+check("hasta 35 fechas se dibuja día a día",
+  granoAuto(1) === "dia" && granoAuto(20) === "dia" && granoAuto(35) === "dia");
+check("de 36 a 240 se agrupa por semana",
+  granoAuto(36) === "semana" && granoAuto(91) === "semana" && granoAuto(240) === "semana");
+check("más de 240 se agrupa por mes", granoAuto(241) === "mes" && granoAuto(900) === "mes");
+
+const unaFecha = new Date(Date.UTC(2026, 6, 29));   // miércoles de la semana 31
+check("la clave por día es el propio día",
+  clavePeriodo(unaFecha, "dia").key === unaFecha.getTime());
+check("la clave por semana agrupa toda la semana ISO",
+  clavePeriodo(unaFecha, "semana").key === "2026-W31" &&
+  clavePeriodo(new Date(Date.UTC(2026, 6, 27)), "semana").key === "2026-W31" &&
+  clavePeriodo(new Date(Date.UTC(2026, 7, 2)), "semana").key === "2026-W31",
+  clavePeriodo(unaFecha, "semana").etiqueta);
+check("y la clave por mes agrupa el mes natural",
+  clavePeriodo(unaFecha, "mes").key === "2026-07" &&
+  clavePeriodo(new Date(Date.UTC(2026, 6, 1)), "mes").key === "2026-07",
+  clavePeriodo(unaFecha, "mes").etiqueta);
+check("los meses se ordenan por su primer día, no alfabéticamente",
+  clavePeriodo(new Date(Date.UTC(2026, 8, 1)), "mes").orden > clavePeriodo(new Date(Date.UTC(2026, 11, 1)), "mes").orden === false);
+
+// Agrupar no puede perder producción: los kg de un mes son la suma de sus días
+const puntosDe = (grano, id) => {
+  state.ui.tendenciaGrano = grano;
+  state.ui.tendencia = id;
+  tarjetaT.innerHTML = "";
+  sandbox.renderTendencia(productRows, porLineaT);
+  return tarjetaT.innerHTML;
+};
+const nDiasReales = new Set(productRows.map(r => r.periodo.getTime())).size;
+const cuentaPuntos = html => (html.match(/circle data-serie/g) || []).length;
+const pDia = cuentaPuntos(puntosDe("dia", "prod.kg"));
+const pSem = cuentaPuntos(puntosDe("semana", "prod.kg"));
+const pMes = cuentaPuntos(puntosDe("mes", "prod.kg"));
+// (semana vs mes no se comparan: la semana 31 cruza a agosto, así que por mes
+// puede haber más puntos que por semana con estos 7 días de prueba)
+check("agrupar reduce los puntos de verdad",
+  pDia > pSem && pDia > pMes, `${nDiasReales} días -> ${pDia} puntos diarios, ${pSem} semanales, ${pMes} mensuales`);
+
+// El ocultado de puntos se prueba directo sobre el gráfico, con series densas
+// y sueltas, para no depender de cuántos días traiga el CSV de prueba.
+const tarjetaL = elMap.chartTendencia;
+const serieDe = n => [{ label: "X", color: "#000",
+  points: Array.from({ length: n }, (_, i) => ({ x: i, y: Math.sin(i) * 10 + 50 })) }];
+const pintaLinea = n => { tarjetaL.innerHTML = "";
+  sandbox.renderLineChart("chartTendencia", "t", "s", serieDe(n), {}); return tarjetaL.innerHTML; };
+const visibles = html => (html.match(/<circle cx=/g) || []).length;
+const conHover = html => (html.match(/circle data-serie/g) || []).length;
+const suelto = pintaLinea(12), denso = pintaLinea(120);
+check("con pocas fechas se dibujan los puntos", visibles(suelto) === 12, visibles(suelto) + " puntos");
+check("con muchas se dibuja solo la línea, sin puntos que la tapen",
+  visibles(denso) === 0, visibles(denso) + " puntos con 120 fechas");
+check("aun sin puntos visibles se puede consultar cada valor",
+  conHover(denso) === 120, conHover(denso) + " zonas con tooltip");
+
+state.ui.tendenciaGrano = "auto";
 state.ui.tendencia = "prod.merma";
 
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);

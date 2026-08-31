@@ -30,7 +30,7 @@ const ids = ["dz1","file1","status1","dz2","file2","status2","dz3","file3","stat
   "ajustesBody","periodoControls","periodoLabel","alcanceLabel","histSliderActive","histLevelTurno","app",
   "paroKpiRow","motivosGrid","motivosEmpty","chartParetoMotivos","chartParosLinea","tableParoOf","countParoOf","parosHint",
   "autoStatus","folderInput","btnCargarCarpeta","btnCargarCarpetaTop","chartMermaArticulo",
-  "paroResumen","paroCatSeg","paroCatTitulo","metricaWrap","metricaLabel","cascadaMetrica","chartProduccionTurno","tableTurno"];
+  "paroResumen","paroCatSeg","paroCatTitulo","metricaWrap","metricaLabel","cascadaMetrica","chartProduccionTurno","tableTurno","tendenciaSel"];
 const elMap = {};
 ids.forEach(id => elMap[id] = stubEl());
 
@@ -565,6 +565,7 @@ const CT_CSV = __dirname + "/testdata/His_CT_Group.csv";
 const ctText = sandbox.decodeBuffer(new Uint8Array(fs.readFileSync(CT_CSV)));
 const ctParsed = sandbox.rowsToObjects(sandbox.parseCsv(ctText, sandbox.sniffDelimiter(ctText.slice(0, ctText.indexOf("\n")))));
 const ctRows = sandbox.mapCtRows(ctParsed.header, ctParsed.index, ctParsed.dataRows);
+sandbox.mergeCtRows(ctRows);
 
 // La columna de Mapex es M / Tiempo Total, exacto. Es lo que justifica no
 // usarla como disponibilidad de jornada: el denominador es el día natural.
@@ -639,6 +640,72 @@ console.log("\n  Comparativa (semana 31, las " + cob.lineas.size + " líneas que
 console.log("    Mapex (M / día natural de 24 h) :", fmtNum(100 * marcha / sum(ctCubierto, "tiempoTotal")) + " %");
 console.log("    Calculada (jornada real)        :", fmtNum(dCalc.pct) + " %");
 console.log("    marcha", fmtNum(marcha / 3600) + " h · paradas que penalizan", fmtNum(penaliza / 3600) + " h");
+
+/* ============================================================
+   Tendencia diaria con indicador elegible
+   ============================================================ */
+
+console.log("\n=== Tendencia diaria (Resumen) ===");
+const METS = ctx("TENDENCIA_METRICAS");
+const dispon = ctx("tendenciaDisponible");
+const grupos = [...new Set(Object.values(METS).map(m => m.grupo))];
+check("el selector ofrece los tres grupos de indicadores",
+  grupos.join(" | ") === "Producción | Disponibilidad | Paradas", grupos.join(" | "));
+check("con los tres CSV cargados todos los indicadores son elegibles",
+  Object.keys(METS).every(dispon), Object.keys(METS).length + " indicadores");
+
+// Sin paradas cargadas, las opciones que dependen de ellas se desactivan
+const paroGuardadas = state.paroRows.splice(0, state.paroRows.length);
+check("sin His_Paro_Groups se desactivan paradas y disponibilidad",
+  !dispon("disp") && !dispon("paros.pnp") && dispon("prod.kg"));
+paroGuardadas.forEach(r => state.paroRows.push(r));
+
+const ctGuardadas = state.ctRows.splice(0, state.ctRows.length);
+check("sin His_CT_Group se desactiva disponibilidad pero no las paradas",
+  !dispon("disp") && dispon("paros.pnp"));
+ctGuardadas.forEach(r => state.ctRows.push(r));
+
+// Render de cada indicador
+const tarjetaT = elMap.chartTendencia;
+const porLineaT = sandbox.aggregateByLinea(productRows);
+state.filters.desde = new Date(Date.UTC(2026, 0, 1));
+state.filters.hasta = new Date(Date.UTC(2026, 11, 31));
+state.filters.areas = new Set([...productRows.map(r => r.area), ...state.paroRows.map(r => r.area)]);
+state.filters.lineas = new Set([...productRows.map(r => r.linea), ...state.paroRows.map(r => r.linea)]);
+for (const id of Object.keys(METS)) {
+  state.ui.tendencia = id;
+  tarjetaT.innerHTML = "";
+  sandbox.renderTendencia(productRows, porLineaT);
+  const html = tarjetaT.innerHTML;
+  check(`«${id}» se dibuja con su selector`,
+    html.includes("<svg") && html.includes('id="tendenciaSel"') && html.includes(`value="${id}" selected`),
+    METS[id].label);
+}
+
+// Un indicador que deja de poder calcularse no puede dejar el gráfico muerto
+state.ui.tendencia = "paros.av";
+const paroGuardadas2 = state.paroRows.splice(0, state.paroRows.length);
+tarjetaT.innerHTML = "";
+sandbox.renderTendencia(productRows, porLineaT);
+check("si el CSV que lo alimenta ya no está, vuelve solo a Merma",
+  state.ui.tendencia === "prod.merma" && tarjetaT.innerHTML.includes("<svg"),
+  state.ui.tendencia);
+check("y esas opciones aparecen desactivadas en el desplegable",
+  tarjetaT.innerHTML.includes("disabled") && tarjetaT.innerHTML.includes("falta CSV"));
+paroGuardadas2.forEach(r => state.paroRows.push(r));
+
+// La disponibilidad diaria usa la misma fórmula que el KPI
+state.ui.tendencia = "disp";
+const unaL = [...sandbox.disponibilidadPorLinea(ctRows, paroRows).keys()][0];
+const unDia = ctRows.filter(r => r.linea === unaL)[0].periodo.getTime();
+const ctD = ctRows.filter(r => r.linea === unaL && r.periodo.getTime() === unDia);
+const paD = paroRows.filter(r => r.linea === unaL && r.periodo.getTime() === unDia);
+const espDia = sandbox.disponibilidadCalculada(ctD, paD);
+const marchaD = sum(ctD, "m"), penD = sum(paD.filter(r => r.categoria !== "tnd"), "segundos");
+check("la disponibilidad diaria del gráfico coincide con marcha/(marcha+paros)",
+  espDia === null || Math.abs(espDia.pct - 100 * marchaD / (marchaD + penD)) < 1e-9,
+  unaL + " el " + new Date(unDia).toISOString().slice(0, 10) + ": " + fmtNum(100 * marchaD / (marchaD + penD)) + " %");
+state.ui.tendencia = "prod.merma";
 
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);
 process.exit(fallos === 0 ? 0 : 1);

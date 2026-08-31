@@ -203,6 +203,15 @@
   .merma-crumbs .crumb-sep { color: var(--text-muted); font-size: 11px; }
   .merma-crumbs .crumb-actual { font-size: 11.5px; color: var(--text-secondary); font-weight: 600; }
 
+  /* Selector de indicador dentro del título de un gráfico */
+  select.chart-metrica {
+    font-size: 12px; font-weight: 600; padding: 2px 6px; border-radius: 6px; margin-left: 4px;
+    background: var(--page); color: var(--text-primary); border: 1px solid var(--border);
+    font-family: inherit; max-width: 210px; cursor: pointer;
+  }
+  select.chart-metrica:hover { border-color: var(--text-muted); }
+  select.chart-metrica:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+
   /* Menú en cascada del selector de gráfico: una columna por nivel */
   .cascada { display: flex; gap: 8px; align-items: flex-start; max-width: min(660px, 82vw); overflow-x: auto; }
   .cascada-col {
@@ -1289,7 +1298,9 @@ const state = {
     // texto se abrió, para no dejar un drill colgado al buscar otra cosa.
     mermaDrill: { busqueda: null, semana: null, dia: null },
     // Qué se pinta en el gráfico del artículo: [grupo, sub, motivo?]
-    metrica: ["prod", "merma"]
+    metrica: ["prod", "merma"],
+    // Indicador del gráfico de tendencia diaria del Resumen
+    tendencia: "prod.merma"
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -4667,6 +4678,149 @@ function renderHistorico() {
 }
 
 /* ============================================================
+   10.7 TENDENCIA DIARIA — indicador elegible
+   ============================================================ */
+
+// Un <select> nativo en vez del menú en cascada de la pestaña Detalle: aquí el
+// gráfico vive en una .chart-card con overflow:hidden, que recortaría un panel
+// propio. El desplegable del navegador es una ventana del sistema y no lo
+// recorta nada.
+const TENDENCIA_METRICAS = {
+  "prod.merma":     { grupo: "Producción", label: "Merma real (%)", eje: "pct" },
+  "prod.sobrepeso": { grupo: "Producción", label: "Sobrepeso (%)", eje: "pct" },
+  "prod.kg":        { grupo: "Producción", label: "Kg encajados", eje: "kg" },
+  "prod.uds":       { grupo: "Producción", label: "Envases fabricados", eje: "int" },
+  "disp":           { grupo: "Disponibilidad", label: "Disponibilidad (%)", eje: "pct" },
+  "paros.todas":    { grupo: "Paradas", label: "Todas las paradas", eje: "min" },
+  "paros.pnp":      { grupo: "Paradas", label: "No planificadas (PNP)", eje: "min" },
+  "paros.pp":       { grupo: "Paradas", label: "Planificadas (PP)", eje: "min" },
+  "paros.av":       { grupo: "Paradas", label: "Averías (AV)", eje: "min" },
+  "paros.tnd":      { grupo: "Paradas", label: "Tiempo no disponible (TND)", eje: "min" }
+};
+
+// Las opciones que hoy no se pueden calcular se dejan desactivadas en vez de
+// ocultas: así se ve que existen y qué archivo hace falta para tenerlas.
+function tendenciaDisponible(id) {
+  if (id === "disp") return state.ctRows.length > 0 && state.paroRows.length > 0;
+  if (id.startsWith("paros.")) return state.paroRows.length > 0;
+  return true;
+}
+
+function tendenciaSelectHtml() {
+  const actual = state.ui.tendencia;
+  const grupos = [];
+  for (const [id, m] of Object.entries(TENDENCIA_METRICAS)) {
+    let g = grupos.find(x => x.nombre === m.grupo);
+    if (!g) { g = { nombre: m.grupo, ops: [] }; grupos.push(g); }
+    const ok = tendenciaDisponible(id);
+    g.ops.push(`<option value="${id}"${id === actual ? " selected" : ""}${ok ? "" : " disabled"}>` +
+      `${escapeHtml(m.label)}${ok ? "" : " — falta CSV"}</option>`);
+  }
+  return `<select class="chart-metrica" id="tendenciaSel" title="Elige qué indicador se dibuja">` +
+    grupos.map(g => `<optgroup label="${escapeHtml(g.nombre)}">${g.ops.join("")}</optgroup>`).join("") +
+    `</select>`;
+}
+
+const TENDENCIA_FMT = {
+  pct: v => v.toFixed(1) + "%",
+  kg: v => fmtInt(v),
+  int: v => fmtInt(v),
+  min: v => fmtInt(v) + "m"
+};
+
+function renderTendencia(rows, porLinea) {
+  let id = state.ui.tendencia;
+  // Si se elige un indicador y luego se recarga sin el CSV que lo alimenta,
+  // hay que volver a uno que sí se pueda pintar.
+  if (!TENDENCIA_METRICAS[id] || !tendenciaDisponible(id)) { id = "prod.merma"; state.ui.tendencia = id; }
+  const met = TENDENCIA_METRICAS[id];
+  const esParos = id.startsWith("paros.");
+  const paros = state.paroRows.length ? getFilteredParoRows() : [];
+  const ct = state.ctRows.length ? getFilteredCtRows() : [];
+
+  // En paradas se enseñan las líneas que más paran; en el resto, las que más
+  // producen. Si no, al cambiar a paradas podría salir el gráfico vacío porque
+  // las líneas de más volumen no son las que tienen paradas registradas.
+  const palette = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"];
+  let topLineas;
+  if (esParos) {
+    const porParo = new Map();
+    for (const r of paros) porParo.set(r.linea, (porParo.get(r.linea) || 0) + r.segundos);
+    topLineas = [...porParo.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(x => x[0]);
+  } else {
+    topLineas = porLinea.slice(0, 6).map(d => d.linea);
+  }
+
+  const dia = d => d.getTime();
+  // Un punto por línea y día, con lo que necesite cada indicador.
+  const celdas = new Map();
+  const dame = (linea, d) => {
+    const k = linea + "||" + d;
+    if (!celdas.has(k)) celdas.set(k, { linea, day: d, mmpp: 0, mermaKg: 0, kg: 0, uds: 0, sobreKg: 0, marcha: 0, penaliza: 0, seg: 0 });
+    return celdas.get(k);
+  };
+  for (const r of rows) {
+    if (!topLineas.includes(r.linea)) continue;
+    const g = dame(r.linea, dia(r.periodo));
+    g.kg += r.kg || 0; g.uds += r.udsCaja || 0;
+    g.sobreKg += r.sobrepesoKg || 0;
+    if (r.aplicaStd) { g.mmpp += r.mmpp; g.mermaKg += r.mermaKg || 0; }
+  }
+  if (id === "disp") for (const r of ct) {
+    if (!topLineas.includes(r.linea)) continue;
+    dame(r.linea, dia(r.periodo)).marcha += r.m || 0;
+  }
+  if (id === "disp" || esParos) for (const r of paros) {
+    if (!topLineas.includes(r.linea)) continue;
+    const g = dame(r.linea, dia(r.periodo));
+    if (r.categoria !== "tnd") g.penaliza += r.segundos;
+    if (esParos && (id === "paros.todas" || id === "paros." + r.categoria)) g.seg += r.segundos;
+  }
+
+  const valor = g => {
+    switch (id) {
+      case "prod.merma": return g.mmpp > 0 ? g.mermaKg / g.mmpp * 100 : null;
+      case "prod.sobrepeso": return g.kg > 0 ? g.sobreKg / g.kg * 100 : null;
+      case "prod.kg": return g.kg > 0 ? g.kg : null;
+      case "prod.uds": return g.uds > 0 ? g.uds : null;
+      // Mismo cálculo que el KPI: marcha / (marcha + PNP + PP + AV), TND fuera.
+      case "disp": return g.marcha > 0 ? 100 * g.marcha / (g.marcha + g.penaliza) : null;
+      default: return g.seg > 0 ? g.seg / 60 : null;
+    }
+  };
+
+  const series = topLineas.map((linea, i) => ({
+    label: linea, color: cssVar(palette[i % palette.length]),
+    points: [...celdas.values()].filter(g => g.linea === linea)
+      .map(g => ({ x: g.day, y: valor(g), g }))
+      .filter(p => p.y !== null)
+  })).filter(s => s.points.length);
+
+  const fmtY = TENDENCIA_FMT[met.eje];
+  const sub = (esParos
+    ? "Líneas con más tiempo parado en la selección (máx. 6)"
+    : "Líneas con más producción en la selección (máx. 6)") +
+    (id === "prod.merma" ? ", solo artículos con estándar" : "") +
+    (id === "disp" ? " — marcha ÷ (marcha + PNP + PP + AV), TND excluido" : "");
+
+  renderLineChart("chartTendencia",
+    `Tendencia diaria · ${tendenciaSelectHtml()}`, sub, series,
+    { formatY: fmtY,
+      formatX: x => new Date(x).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", timeZone: "UTC" }),
+      tooltip: (p, s) => `<strong>${escapeHtml(s.label)}</strong><br>` +
+        fmtDayLong(new Date(p.x)) + `<br>${escapeHtml(met.label)}: ` +
+        (met.eje === "min" ? fmtDur(p.g.seg) : met.eje === "kg" ? fmtKg(p.y) : met.eje === "int" ? fmtInt(p.y) + " envases" : fmtPct(p.y)) +
+        (p.g.kg && !esParos && id !== "prod.kg" ? `<br>${fmtKg(p.g.kg)} encajados` : "")
+    });
+
+  const sel = document.getElementById("tendenciaSel");
+  if (sel) sel.addEventListener("change", () => {
+    state.ui.tendencia = sel.value;
+    renderTendencia(rows, porLinea);
+  });
+}
+
+/* ============================================================
    11. RENDER PRINCIPAL
    ============================================================ */
 
@@ -4691,25 +4845,7 @@ function renderAll(skipFilters) {
     { formatValue: v => fmtPct(v), color: cssVar("--s8") }
   );
 
-  const palette = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"];
-  const topLineas = porLinea.slice(0, 6).map(d => d.linea);
-  const byDayLinea = new Map();
-  for (const r of rows) {
-    if (!topLineas.includes(r.linea) || !r.aplicaStd) continue;
-    const dayKey = r.periodo.getTime();
-    const k = r.linea + "||" + dayKey;
-    if (!byDayLinea.has(k)) byDayLinea.set(k, { linea: r.linea, day: dayKey, mmpp: 0, mermaKg: 0 });
-    const g = byDayLinea.get(k);
-    g.mmpp += r.mmpp; g.mermaKg += r.mermaKg || 0;
-  }
-  const series = topLineas.map((linea, i) => ({
-    label: linea, color: cssVar(palette[i % palette.length]),
-    points: [...byDayLinea.values()].filter(g => g.linea === linea && g.mmpp > 0)
-      .map(g => ({ x: g.day, y: g.mermaKg / g.mmpp * 100 }))
-  })).filter(s => s.points.length);
-  renderLineChart("chartTendencia", "Tendencia diaria de merma real (%)", "Líneas con más producción en la selección (máx. 6), solo artículos con estándar",
-    series, { formatY: v => v.toFixed(1) + "%", formatX: x => new Date(x).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", timeZone: "UTC" }) }
-  );
+  renderTendencia(rows, porLinea);
 
   const dispCalcLineas = (state.ctRows.length && state.paroRows.length)
     ? disponibilidadPorLinea(getFilteredCtRows(), getFilteredParoRows()) : new Map();

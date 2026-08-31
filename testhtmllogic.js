@@ -556,5 +556,89 @@ check("dos cortes de semanas distintas se acumulan sin pisarse",
 check("y volver a cargar el segundo no duplica",
   sandbox.mergeParoRows(rows35).dup === 4296);
 
+/* ============================================================
+   Disponibilidad calculada desde las paradas
+   ============================================================ */
+
+console.log("\n\n=== Disponibilidad ===");
+const CT_CSV = __dirname + "/testdata/His_CT_Group.csv";
+const ctText = sandbox.decodeBuffer(new Uint8Array(fs.readFileSync(CT_CSV)));
+const ctParsed = sandbox.rowsToObjects(sandbox.parseCsv(ctText, sandbox.sniffDelimiter(ctText.slice(0, ctText.indexOf("\n")))));
+const ctRows = sandbox.mapCtRows(ctParsed.header, ctParsed.index, ctParsed.dataRows);
+
+// La columna de Mapex es M / Tiempo Total, exacto. Es lo que justifica no
+// usarla como disponibilidad de jornada: el denominador es el día natural.
+const conDisp = ctRows.filter(r => r.disponibilidad !== null && r.tiempoTotal > 0);
+const desvios = conDisp.map(r => Math.abs(100 * r.m / r.tiempoTotal - r.disponibilidad));
+check("la columna Disponibilidad de Mapex es exactamente M / Tiempo Total",
+  Math.max(...desvios) < 0.01, "desvío máximo " + Math.max(...desvios).toFixed(4) + " pp en " + conDisp.length + " filas");
+
+// Y el denominador es el día natural: los tramos cubren las 24 h
+const porLineaDia = new Map();
+ctRows.forEach(r => {
+  const k = r.linea + "|" + r.periodo.toISOString().slice(0, 10);
+  porLineaDia.set(k, (porLineaDia.get(k) || 0) + r.tiempoTotal);
+});
+const dias24 = [...porLineaDia.values()].filter(v => Math.abs(v - 86400) < 2).length;
+check("los tramos de His_CT_Group cubren el día natural completo (24 h)",
+  dias24 === porLineaDia.size, dias24 + " de " + porLineaDia.size + " grupos línea+día suman 86.400 s");
+
+// --- La fórmula nueva -----------------------------------------------------
+const dCalc = sandbox.disponibilidadCalculada(ctRows, paroRows);
+const cob = sandbox.coberturaParos(paroRows);
+const ctCubierto = ctRows.filter(r => cob.lineas.has(r.linea) &&
+  r.periodo.getTime() >= cob.min && r.periodo.getTime() <= cob.max);
+const marcha = sum(ctCubierto, "m");
+const penaliza = sum(paroRows.filter(r => r.categoria !== "tnd"), "segundos");
+check("disponibilidad = marcha / (marcha + PNP + PP + AV)",
+  Math.abs(dCalc.pct - 100 * marcha / (marcha + penaliza)) < 1e-9,
+  fmtNum(dCalc.pct) + " %");
+check("la ventana de trabajo es marcha + paradas, no el día natural",
+  Math.abs(dCalc.ventana - (marcha + penaliza)) < 1e-9 && dCalc.ventana < sum(ctCubierto, "tiempoTotal"),
+  fmtNum(dCalc.ventana / 3600) + " h frente a " + fmtNum(sum(ctCubierto, "tiempoTotal") / 3600) + " h de calendario");
+
+// El TND no puede penalizar: se excluye de los dos lados de la división
+const tndFalso = paroRows.slice(0, 3).map(r => ({ ...r, categoria: "tnd" }));
+const sinTnd = sandbox.disponibilidadCalculada(ctRows, paroRows.filter(r => !paroRows.slice(0, 3).includes(r)));
+const conTnd = sandbox.disponibilidadCalculada(ctRows, paroRows.filter(r => !paroRows.slice(0, 3).includes(r)).concat(tndFalso));
+check("añadir paradas TND no cambia la disponibilidad",
+  Math.abs(sinTnd.pct - conTnd.pct) < 1e-9, fmtNum(conTnd.pct) + " %");
+check("y sí se contabiliza aparte para poder enseñarlo",
+  Math.abs(conTnd.tnd - sum(tndFalso, "segundos")) < 1e-9);
+
+// Más paradas -> menos disponibilidad, nunca al revés
+const mitad = sandbox.disponibilidadCalculada(ctRows, paroRows.slice(0, Math.floor(paroRows.length / 2)));
+check("con la mitad de las paradas la disponibilidad sube", mitad.pct > dCalc.pct,
+  fmtNum(mitad.pct) + " % contra " + fmtNum(dCalc.pct) + " %");
+check("nunca pasa de 100 % ni baja de 0 %", dCalc.pct > 0 && dCalc.pct <= 100);
+check("sin paradas cargadas devuelve null (no un 100 % engañoso)",
+  sandbox.disponibilidadCalculada(ctRows, []) === null);
+// La marcha de líneas que el archivo de paradas no cubre no puede colarse en
+// el denominador: si no, la disponibilidad se dispara al 100 %.
+check("solo entra la marcha de las líneas y fechas que cubren las paradas",
+  Math.abs(dCalc.marcha - sum(ctCubierto, "m")) < 1e-9 && sum(ctCubierto, "m") < sum(ctRows, "m"),
+  fmtNum(sum(ctCubierto, "m") / 3600) + " h de " + fmtNum(sum(ctRows, "m") / 3600) + " h totales");
+
+// Sin uno de los dos archivos no se puede calcular: mejor null que un número
+// inventado con medio dato.
+check("sin tiempo de marcha devuelve null en vez de inventarse una cifra",
+  sandbox.disponibilidadCalculada([], paroRows) === null);
+
+// Por línea
+const porLinea2 = sandbox.disponibilidadPorLinea(ctRows, paroRows);
+check("el desglose por línea cubre las líneas con marcha",
+  porLinea2.size > 0 && [...porLinea2.values()].every(d => d.pct > 0 && d.pct <= 100),
+  porLinea2.size + " líneas");
+const unaLinea = [...porLinea2.keys()][0];
+const esperadaUna = sandbox.disponibilidadCalculada(
+  ctRows.filter(r => r.linea === unaLinea), paroRows.filter(r => r.linea === unaLinea));
+check("y cada línea cuadra con su cálculo por separado",
+  Math.abs(porLinea2.get(unaLinea).pct - esperadaUna.pct) < 1e-9, unaLinea);
+
+console.log("\n  Comparativa (semana 31, las " + cob.lineas.size + " líneas que cubre His_Paro_Groups):");
+console.log("    Mapex (M / día natural de 24 h) :", fmtNum(100 * marcha / sum(ctCubierto, "tiempoTotal")) + " %");
+console.log("    Calculada (jornada real)        :", fmtNum(dCalc.pct) + " %");
+console.log("    marcha", fmtNum(marcha / 3600) + " h · paradas que penalizan", fmtNum(penaliza / 3600) + " h");
+
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);
 process.exit(fallos === 0 ? 0 : 1);

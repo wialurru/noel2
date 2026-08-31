@@ -29,7 +29,8 @@ const ids = ["dz1","file1","status1","dz2","file2","status2","dz3","file3","stat
   "topbar","tabbar","views","welcome","uploadSection","datosSlot","alertList","tabBadgeAlertas","alertasSub",
   "ajustesBody","periodoControls","periodoLabel","alcanceLabel","histSliderActive","histLevelTurno","app",
   "paroKpiRow","motivosGrid","motivosEmpty","chartParetoMotivos","chartParosLinea","tableParoOf","countParoOf","parosHint",
-  "autoStatus","folderInput","btnCargarCarpeta","btnCargarCarpetaTop","chartMermaArticulo"];
+  "autoStatus","folderInput","btnCargarCarpeta","btnCargarCarpetaTop","chartMermaArticulo",
+  "paroResumen","paroCatSeg","paroCatTitulo","metricaWrap","metricaLabel","cascadaMetrica","chartProduccionTurno","tableTurno"];
 const elMap = {};
 ids.forEach(id => elMap[id] = stubEl());
 
@@ -393,9 +394,9 @@ const aplicar = ctx("aplicarMetricaSilenciosa");
 
 // Los motivos del tercer nivel salen de los datos, no de una lista escrita a
 // mano: si Mapex añade un motivo nuevo tiene que aparecer solo.
-const motAjustes = sandbox.motivosDe("ajustes");
-const motAverias = sandbox.motivosDe("averias");
-check("el menú saca los motivos de ajuste de los datos", motAjustes.length === 13, motAjustes.length + " motivos");
+const motAjustes = sandbox.motivosDe("pnp");
+const motAverias = sandbox.motivosDe("av");
+check("el menú saca los motivos PNP de los datos", motAjustes.length === 13, motAjustes.length + " motivos");
 check("y los de avería igual", motAverias.length === 2, motAverias.map(a => a.motivo).join(", "));
 check("vienen ordenados por tiempo parado, de mayor a menor",
   motAjustes.every((m, i) => i === 0 || m.segundos <= motAjustes[i - 1].segundos) &&
@@ -419,8 +420,8 @@ for (const [ruta, espera] of [
   [["prod", "uds"], "envases fabricados"],
   [["prod", "kg"], "kg encajados"],
   [["prod", "merma"], "merma"],
-  [["paros", "ajustes", null], "ajustes"],
-  [["paros", "ajustes", "AJUSTE ETIQUETADORA"], "AJUSTE ETIQUETADORA"]
+  [["paros", "pnp", null], "no planificadas"],
+  [["paros", "pnp", "AJUSTE ETIQUETADORA"], "AJUSTE ETIQUETADORA"]
 ]) {
   aplicar(ruta);
   const r = pintar("27752");
@@ -430,13 +431,13 @@ for (const [ruta, espera] of [
 
 // Una categoría sin datos para ese artículo avisa en vez de dibujar un gráfico
 // vacío o quedarse con lo anterior en pantalla.
-aplicar(["paros", "averias", null]);
+aplicar(["paros", "av", null]);
 const sinAverias = pintar("27752");
 check("una categoría sin paradas de ese artículo lo dice claramente",
   !sinAverias.oculto && sinAverias.html.includes("Sin paradas") && !sinAverias.html.includes("<svg"));
 
 // El drill baja a las paradas una a una, no a las OF
-aplicar(["paros", "ajustes", null]);
+aplicar(["paros", "pnp", null]);
 const diaConParos = parosArt[0].periodo.getTime();
 state.ui.mermaDrill = { busqueda: "27752", semana: parosArt[0].semana.key, dia: diaConParos };
 const paradasDia = pintar("27752");
@@ -450,7 +451,7 @@ check("con una métrica de producción, el mismo día abre las OF",
 // Si no hay His_Paro_Groups cargado, una métrica de paradas no puede dejar la
 // tarjeta muerta: tiene que caer sola a producción.
 state.ui.mermaDrill = { busqueda: null, semana: null, dia: null };
-aplicar(["paros", "ajustes", null]);
+aplicar(["paros", "pnp", null]);
 const guardados = state.paroRows.splice(0, state.paroRows.length);
 pintar("27752");
 check("sin datos de paradas cargados, la métrica vuelve sola a Merma",
@@ -465,6 +466,95 @@ check("un residuo negativo minúsculo se imprime como cero, no como -0",
 check("un valor negativo de verdad sigue saliendo negativo",
   fmtIntCtx(-94) === "-94" && fmtPctCtx(-1.23) === "-1,23 %",
   fmtIntCtx(-94) + " / " + fmtPctCtx(-1.23));
+
+/* ============================================================
+   Categorías de parada PNP / PP / AV / TND (formato con más datos)
+   ============================================================ */
+
+console.log("\n\n=== Categorías de parada (His_Paro_Groups_s35) ===");
+const S35 = __dirname + "/testdata/His_Paro_Groups_s35.csv";
+const t35 = sandbox.decodeBuffer(new Uint8Array(fs.readFileSync(S35)));
+const p35 = sandbox.rowsToObjects(sandbox.parseCsv(t35, sandbox.sniffDelimiter(t35.slice(0, t35.indexOf("\n")))));
+check("el formato nuevo se reconoce igual que el anterior", sandbox.detectCsvKind(p35.index) === "paro");
+const { rows: rows35, skipped: sk35 } = sandbox.mapParoRows(p35.header, p35.index, p35.dataRows);
+check("mapea las 4.296 paradas sin descartar ninguna", rows35.length === 4296 && sk35 === 0,
+  rows35.length + " filas, " + sk35 + " descartadas");
+
+// Objetivo medido sobre el CSV real antes de escribir el código
+const ESPERADO = {
+  pp:  { n: 1265, h: 159.9, motivos: 15 },
+  pnp: { n: 2966, h: 134.0, motivos: 18 },
+  av:  { n: 60,   h: 7.2,   motivos: 2 },
+  tnd: { n: 5,    h: 1.0,   motivos: 2 }
+};
+for (const [cat, esp] of Object.entries(ESPERADO)) {
+  const filas = rows35.filter(r => r.categoria === cat);
+  const horas = sum(filas, "segundos") / 3600;
+  check(`${cat.toUpperCase()}: ${esp.n} paradas y ${esp.h} h`,
+    filas.length === esp.n && Math.abs(horas - esp.h) < 0.05,
+    `${filas.length} paradas · ${horas.toFixed(1)} h`);
+  check(`   y ${esp.motivos} motivos distintos`, sandbox.motivosDe(cat, rows35).length === esp.motivos,
+    sandbox.motivosDe(cat, rows35).length + " motivos");
+}
+check("ninguna parada se queda sin clasificar",
+  rows35.filter(r => r.categoria === "otro").length === 0,
+  rows35.filter(r => r.categoria === "otro").length + " sin clasificar");
+check("las cuatro categorías suman el total, sin solapes ni huecos",
+  Object.keys(ESPERADO).reduce((s, c) => s + rows35.filter(r => r.categoria === c).length, 0) === rows35.length);
+
+// "NO PLANIFICADAS" contiene "PLANIFICADAS": si el orden de comprobación fuera
+// al revés, todas las PNP caerían en PP y el reparto quedaría al revés.
+const catDe = ctx("categoriaParo");
+check("PNP no se confunde con PP pese a contener su texto",
+  catDe("PARADAS NO PLANIFICADAS (PNP)") === "pnp" && catDe("PARADAS PLANIFICADAS (PP)") === "pp");
+check("las siglas mandan sobre el texto largo",
+  catDe("LO QUE SEA (TND)") === "tnd" && catDe("LO QUE SEA (AV)") === "av");
+check("una categoría desconocida no se cuela en ninguna de las cuatro",
+  catDe("ALGO NUEVO DE MAPEX") === "otro" && catDe("") === "otro");
+
+// TND es la única que Mapex marca como que NO cuenta contra la disponibilidad
+const tnd = rows35.filter(r => r.categoria === "tnd");
+check("TND es la única con tiempo en PARO PROGRAMADO",
+  sum(tnd, "segProgramado") > 0 &&
+  rows35.filter(r => r.categoria !== "tnd").every(r => r.segProgramado === 0),
+  fmtNum(sum(tnd, "segProgramado") / 3600) + " h programadas");
+check("y no suma nada a DISPONIBILIDAD (no penaliza el OEE)",
+  tnd.every(r => r.segDisponibilidad === 0));
+
+// El formato nuevo trae paros de línea sin OF ("--"): no deben romper el cruce
+const sinOfReal = rows35.filter(r => !r.of);
+check("los paros de línea sin OF se admiten sin romper nada", sinOfReal.length === 339,
+  sinOfReal.length + " paradas sin OF asignada");
+check('el "--" de Mapex se limpia en vez de tratarse como una OF real',
+  rows35.every(r => r.of !== "--" && r.producto !== "--" && r.desc !== "--"));
+// Sin la limpieza, las 339 caían todas en una sola fila "--" con la línea de la
+// primera, mezclando líneas distintas.
+const ofs35 = sandbox.aggregateParosPorOf(rows35, productRows);
+check("esas paradas no inventan una OF falsa que mezcle líneas",
+  !ofs35.some(o => o.of === "--" || o.of === "(sin OF)"),
+  ofs35.length + " OF reales");
+check("cada OF agrupada pertenece a una sola línea",
+  ofs35.every(o => new Set(rows35.filter(r => r.of === o.of).map(r => r.linea)).size === 1));
+
+// Reparto y apilado
+const reparto = sandbox.repartoPorCategoria(rows35);
+check("repartoPorCategoria devuelve las cuatro, en orden fijo",
+  reparto.map(c => c.id).join(",") === "pnp,pp,av,tnd", reparto.map(c => c.id).join(","));
+check("los porcentajes del reparto suman 100",
+  Math.abs(sum(reparto, "pct") - 100) < 1e-9, fmtNum(sum(reparto, "pct")) + " %");
+const segs = sandbox.segmentosPorCategoria(rows35);
+check("el apilado por categoría cuadra en minutos con el total",
+  Math.abs(sum(segs, "value") - sum(rows35, "segundos") / 60) < 1e-6);
+
+// Dedup entre cortes distintos: s31 y s35 son semanas diferentes, deben sumarse
+state.paroRows.length = 0;
+const m31 = sandbox.mergeParoRows(paroRows);
+const m35 = sandbox.mergeParoRows(rows35);
+check("dos cortes de semanas distintas se acumulan sin pisarse",
+  m31.added === 2059 && m35.added === 4296 && m35.dup === 0,
+  `${m31.added} + ${m35.added} = ${state.paroRows.length}`);
+check("y volver a cargar el segundo no duplica",
+  sandbox.mergeParoRows(rows35).dup === 4296);
 
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);
 process.exit(fallos === 0 ? 0 : 1);

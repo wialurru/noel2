@@ -30,7 +30,7 @@ const ids = ["dz1","file1","status1","dz2","file2","status2","dz3","file3","stat
   "ajustesBody","periodoControls","periodoLabel","alcanceLabel","histSliderActive","histLevelTurno","app",
   "paroKpiRow","motivosGrid","motivosEmpty","chartParetoMotivos","chartParosLinea","tableParoOf","countParoOf","parosHint",
   "autoStatus","folderInput","btnCargarCarpeta","btnCargarCarpetaTop","chartMermaArticulo",
-  "paroResumen","paroCatSeg","paroCatTitulo","metricaWrap","metricaLabel","cascadaMetrica","chartProduccionTurno","tableTurno","tendenciaSel","tendenciaGrano"];
+  "paroResumen","paroCatSeg","paroCatTitulo","metricaWrap","metricaLabel","cascadaMetrica","chartProduccionTurno","tableTurno","tendenciaSel","tendenciaGrano","tendenciaDesglose"];
 const elMap = {};
 ids.forEach(id => elMap[id] = stubEl());
 
@@ -769,6 +769,68 @@ check("con muchas se dibuja solo la línea, sin puntos que la tapen",
 check("aun sin puntos visibles se puede consultar cada valor",
   conHover(denso) === 120, conHover(denso) + " zonas con tooltip");
 
+state.ui.tendenciaGrano = "auto";
+state.ui.tendencia = "prod.merma";
+
+/* ============================================================
+   Unificar todas las líneas en una sola serie
+   ============================================================ */
+
+console.log("\n=== Unificado de líneas ===");
+state.ui.tendenciaGrano = "dia";
+const pintaDesglose = (desglose, id) => {
+  state.ui.tendenciaDesglose = desglose;
+  state.ui.tendencia = id;
+  tarjetaT.innerHTML = "";
+  sandbox.renderTendencia(productRows, porLineaT);
+  return tarjetaT.innerHTML;
+};
+const nLineas = new Set(productRows.map(r => r.linea)).size;
+
+const porLineaHtml = pintaDesglose("linea", "prod.kg");
+const totalHtml = pintaDesglose("total", "prod.kg");
+const seriesDe = html => (html.match(/<path d="M/g) || []).length;
+check("por línea se dibujan varias series (máximo 6)",
+  seriesDe(porLineaHtml) > 1 && seriesDe(porLineaHtml) <= 6, seriesDe(porLineaHtml) + " series de " + nLineas + " líneas");
+check("unificado deja una sola serie", seriesDe(totalHtml) === 1, seriesDe(totalHtml) + " serie");
+check("y avisa de cuántas líneas ha sumado",
+  totalHtml.includes(`Las ${nLineas} líneas de la selección sumadas`), nLineas + " líneas");
+check("por línea avisa de las que quedan fuera",
+  porLineaHtml.includes("quedan") && porLineaHtml.includes("Todas juntas"));
+
+// Lo importante: el total tiene que ser la suma de verdad, no la de las 6 que
+// se dibujaban antes.
+const totalKgReal = sum(productRows, "kg");
+const kg6 = sum(productRows.filter(r => porLineaT.slice(0, 6).map(x => x.linea).includes(r.linea)), "kg");
+const puntosY = html => [...html.matchAll(/data-y="([-\d.]+)"/g)].map(m => parseFloat(m[1]));
+const sumaTotal = puntosY(totalHtml).reduce((a, b) => a + b, 0);
+check("el total suma TODAS las líneas seleccionadas, no solo las 6 dibujadas",
+  Math.abs(sumaTotal - totalKgReal) < 1, fmtNum(sumaTotal) + " kg contra " + fmtNum(totalKgReal) + " kg reales");
+check("y esa suma es mayor que la de las 6 líneas del desglose",
+  totalKgReal > kg6, fmtNum(totalKgReal) + " kg contra " + fmtNum(kg6) + " kg del top 6");
+
+// Los porcentajes se recalculan sobre el conjunto, no se promedian por línea
+const totalMerma = pintaDesglose("total", "prod.merma");
+const filasStd = productRows.filter(r => r.aplicaStd);
+const esperadaGlobal = sum(filasStd, "mermaKg") / sum(filasStd, "mmpp") * 100;
+const puntosMerma = puntosY(totalMerma);
+const mermaPonderada = sandbox.weightedMermaRealPct(filasStd);
+check("la merma unificada se pondera, no se promedia entre líneas",
+  puntosMerma.length > 0 && Math.abs(esperadaGlobal - mermaPonderada) < 1e-9,
+  "global " + fmtNum(esperadaGlobal) + " %");
+
+// Con una sola línea el texto tiene que concordar
+const guardadas = productRows.filter(r => r.linea === "N2_ELA_L03");
+state.filters.lineas = new Set(["N2_ELA_L03"]);
+tarjetaT.innerHTML = "";
+state.ui.tendenciaDesglose = "total";
+state.ui.tendencia = "prod.kg";
+sandbox.renderTendencia(guardadas, sandbox.aggregateByLinea(guardadas));
+check("con una sola línea el texto concuerda en singular",
+  tarjetaT.innerHTML.includes("Una sola línea") && !tarjetaT.innerHTML.includes("Las 1 líneas"),
+  "sin «Las 1 líneas ... sumadas»");
+state.filters.lineas = new Set(productRows.map(r => r.linea));
+state.ui.tendenciaDesglose = "linea";
 state.ui.tendenciaGrano = "auto";
 state.ui.tendencia = "prod.merma";
 

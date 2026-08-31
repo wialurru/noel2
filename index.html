@@ -407,7 +407,7 @@
   #histBreadcrumb:empty { display: none; }
 
   .chart-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 11px 13px; }
-  .chart-card h3 { margin: 0 0 2px; font-size: 12.5px; font-weight: 650; flex-shrink: 0; }
+  .chart-card h3 { margin: 0 0 2px; font-size: 12.5px; font-weight: 650; flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
   .chart-card .chart-sub {
     margin: 0 0 8px; font-size: 11px; color: var(--text-muted); flex-shrink: 0;
     overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -1301,7 +1301,8 @@ const state = {
     metrica: ["prod", "merma"],
     // Indicador del gráfico de tendencia del Resumen y cada cuánto se agrupa
     tendencia: "prod.merma",
-    tendenciaGrano: "auto"
+    tendenciaGrano: "auto",
+    tendenciaDesglose: "linea"
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -3051,7 +3052,9 @@ function renderLineChart(containerId, title, sub, series, opts = {}) {
     pts.forEach((p, pi) => {
       const cx = xScale(p.x).toFixed(1), cy = yScale(p.y).toFixed(1);
       if (puntosVisibles) dots += `<circle cx="${cx}" cy="${cy}" r="${s.dash ? 2.5 : 4}" fill="${s.color}" stroke="${cssVar("--surface-1")}" stroke-width="${s.dash ? 1 : 2}" style="pointer-events:none;"></circle>`;
-      hits += `<circle data-serie="${si}" data-i="${pi}" data-clic="${clicable ? 1 : 0}" cx="${cx}" cy="${cy}" r="${(clicable ? Math.max(rHit, 5) : rHit).toFixed(1)}" fill="transparent" style="cursor:${clicable ? "pointer" : "default"};"></circle>`;
+      // data-x/data-y los necesita el tooltip por defecto (el que se usa
+      // cuando quien llama no pasa uno propio); sin ellos mostraba "undefined".
+      hits += `<circle data-serie="${si}" data-i="${pi}" data-clic="${clicable ? 1 : 0}" data-x="${p.x}" data-y="${p.y}" cx="${cx}" cy="${cy}" r="${(clicable ? Math.max(rHit, 5) : rHit).toFixed(1)}" fill="transparent" style="cursor:${clicable ? "pointer" : "default"};"></circle>`;
     });
   });
 
@@ -4740,6 +4743,7 @@ const TENDENCIA_FMT = {
    Los cortes están puestos donde el gráfico deja de respirar: hasta ~35 fechas
    se distinguen los puntos, hasta ~35 semanas también, y de ahí a meses. */
 const TENDENCIA_GRANOS = { auto: "Automático", dia: "Por día", semana: "Por semana", mes: "Por mes" };
+const GRANO_CORTO = { dia: "día", semana: "semana", mes: "mes" };
 
 function granoAuto(nDias) {
   if (nDias <= 35) return "dia";
@@ -4759,12 +4763,23 @@ function clavePeriodo(fecha, grano) {
   return { key: fecha.getTime(), orden: fecha.getTime(), etiqueta: fmtDayLong(fecha) };
 }
 
+// Desglose por línea o todo junto. Es lo que convierte un gráfico de 15 líneas
+// —de las que además solo caben 6— en una visión de conjunto legible.
+function tendenciaDesgloseSelectHtml(nLineas) {
+  const actual = state.ui.tendenciaDesglose || "linea";
+  const ops = [["linea", nLineas > 6 ? `Por línea (top 6 de ${nLineas})` : "Por línea"],
+               ["total", nLineas > 1 ? `Todas juntas (${nLineas})` : "Todas juntas"]];
+  return `<select class="chart-metrica" id="tendenciaDesglose" title="Una línea por cada línea de producción, o todas sumadas en una">` +
+    ops.map(([id, label]) => `<option value="${id}"${id === actual ? " selected" : ""}>${escapeHtml(label)}</option>`).join("") +
+    `</select>`;
+}
+
 function tendenciaGranoSelectHtml(efectivo) {
   const actual = state.ui.tendenciaGrano || "auto";
   return `<select class="chart-metrica" id="tendenciaGrano" title="Cada cuánto se agrupa el eje de tiempo">` +
     Object.entries(TENDENCIA_GRANOS).map(([id, label]) =>
       `<option value="${id}"${id === actual ? " selected" : ""}>` +
-      escapeHtml(id === "auto" ? `Automático (${TENDENCIA_GRANOS[efectivo].toLowerCase()})` : label) +
+      escapeHtml(id === "auto" ? `Auto · ${GRANO_CORTO[efectivo]}` : label) +
       `</option>`).join("") + `</select>`;
 }
 
@@ -4778,18 +4793,30 @@ function renderTendencia(rows, porLinea) {
   const paros = state.paroRows.length ? getFilteredParoRows() : [];
   const ct = state.ctRows.length ? getFilteredCtRows() : [];
 
+  // Unificado: una sola serie con TODAS las líneas seleccionadas sumadas. Con
+  // 15 líneas el desglose es ilegible y encima solo caben 6, así que quien
+  // selecciona un área entera normalmente quiere la visión de conjunto.
+  const unificado = state.ui.tendenciaDesglose === "total";
+  const TODAS = "\u0000total";
+
   // En paradas se enseñan las líneas que más paran; en el resto, las que más
   // producen. Si no, al cambiar a paradas podría salir el gráfico vacío porque
   // las líneas de más volumen no son las que tienen paradas registradas.
   const palette = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"];
+  const lineasEnJuego = new Set([...(esParos ? paros : rows)].map(r => r.linea));
   let topLineas;
-  if (esParos) {
+  if (unificado) {
+    topLineas = [TODAS];
+  } else if (esParos) {
     const porParo = new Map();
     for (const r of paros) porParo.set(r.linea, (porParo.get(r.linea) || 0) + r.segundos);
     topLineas = [...porParo.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(x => x[0]);
   } else {
     topLineas = porLinea.slice(0, 6).map(d => d.linea);
   }
+  // En unificado no se filtra por línea: entran todas las de la selección.
+  const entra = linea => unificado || topLineas.includes(linea);
+  const clave = linea => unificado ? TODAS : linea;
 
   // Cuántas fechas distintas hay en juego decide si se agrupa por día, semana
   // o mes cuando el usuario lo deja en automático.
@@ -4807,19 +4834,19 @@ function renderTendencia(rows, porLinea) {
     return celdas.get(k);
   };
   for (const r of rows) {
-    if (!topLineas.includes(r.linea)) continue;
-    const g = dame(r.linea, r.periodo);
+    if (!entra(r.linea)) continue;
+    const g = dame(clave(r.linea), r.periodo);
     g.kg += r.kg || 0; g.uds += r.udsCaja || 0;
     g.sobreKg += r.sobrepesoKg || 0;
     if (r.aplicaStd) { g.mmpp += r.mmpp; g.mermaKg += r.mermaKg || 0; }
   }
   if (id === "disp") for (const r of ct) {
-    if (!topLineas.includes(r.linea)) continue;
-    dame(r.linea, r.periodo).marcha += r.m || 0;
+    if (!entra(r.linea)) continue;
+    dame(clave(r.linea), r.periodo).marcha += r.m || 0;
   }
   if (id === "disp" || esParos) for (const r of paros) {
-    if (!topLineas.includes(r.linea)) continue;
-    const g = dame(r.linea, r.periodo);
+    if (!entra(r.linea)) continue;
+    const g = dame(clave(r.linea), r.periodo);
     if (r.categoria !== "tnd") g.penaliza += r.segundos;
     if (esParos && (id === "paros.todas" || id === "paros." + r.categoria)) g.seg += r.segundos;
   }
@@ -4837,7 +4864,8 @@ function renderTendencia(rows, porLinea) {
   };
 
   const series = topLineas.map((linea, i) => ({
-    label: linea, color: cssVar(palette[i % palette.length]),
+    label: linea === TODAS ? `Total · ${fmtInt(lineasEnJuego.size)} línea${lineasEnJuego.size === 1 ? "" : "s"}` : linea,
+    color: cssVar(palette[i % palette.length]),
     points: [...celdas.values()].filter(g => g.linea === linea)
       .map(g => ({ x: g.day, y: valor(g), g }))
       .filter(p => p.y !== null)
@@ -4845,9 +4873,14 @@ function renderTendencia(rows, porLinea) {
 
   const fmtY = TENDENCIA_FMT[met.eje];
   const puntosPorSerie = Math.max(0, ...series.map(s => s.points.length));
-  const sub = (esParos
-    ? "Líneas con más tiempo parado en la selección (máx. 6)"
-    : "Líneas con más producción en la selección (máx. 6)") +
+  const sub = (unificado
+    ? (lineasEnJuego.size === 1
+        ? "Una sola línea en la selección"
+        : `Las ${fmtInt(lineasEnJuego.size)} líneas de la selección sumadas en una`)
+    : esParos
+      ? "Líneas con más tiempo parado en la selección (máx. 6)"
+      : "Líneas con más producción en la selección (máx. 6)") +
+    (!unificado && lineasEnJuego.size > 6 ? ` — quedan ${fmtInt(lineasEnJuego.size - 6)} fuera; usa «Todas juntas» para la visión de conjunto` : "") +
     (id === "prod.merma" ? ", solo artículos con estándar" : "") +
     (id === "disp" ? " — marcha ÷ (marcha + PNP + PP + AV), TND excluido" : "") +
     ` · ${fmtInt(nDias)} días agrupados en ${fmtInt(puntosPorSerie)} ${grano === "dia" ? "días" : grano === "semana" ? "semanas" : "meses"}`;
@@ -4860,7 +4893,7 @@ function renderTendencia(rows, porLinea) {
   };
 
   renderLineChart("chartTendencia",
-    `Tendencia · ${tendenciaSelectHtml()} ${tendenciaGranoSelectHtml(granoAuto(nDias))}`, sub, series,
+    `Tendencia · ${tendenciaSelectHtml()} ${tendenciaGranoSelectHtml(granoAuto(nDias))} ${tendenciaDesgloseSelectHtml(lineasEnJuego.size)}`, sub, series,
     { formatY: fmtY, formatX: fmtX,
       tooltip: (p, s) => `<strong>${escapeHtml(s.label)}</strong><br>` +
         escapeHtml(p.g.etiqueta) + `<br>${escapeHtml(met.label)}: ` +
@@ -4876,6 +4909,11 @@ function renderTendencia(rows, porLinea) {
   const selG = document.getElementById("tendenciaGrano");
   if (selG) selG.addEventListener("change", () => {
     state.ui.tendenciaGrano = selG.value;
+    renderTendencia(rows, porLinea);
+  });
+  const selD = document.getElementById("tendenciaDesglose");
+  if (selD) selD.addEventListener("change", () => {
+    state.ui.tendenciaDesglose = selD.value;
     renderTendencia(rows, porLinea);
   });
 }

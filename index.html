@@ -3827,7 +3827,13 @@ function renderParos(ctRows, dibujarPareto) {
   }
   const lineas = [...byLinea.values()];
 
-  renderBarChart("chartDisponibilidadTurnos", "Disponibilidad media por turno", "Media simple de la columna Disponibilidad (%) de His_CT_Group — orientativa",
+  // BUG: se titulaba "por turno" pero agrupa por LÍNEA — y no podría ser de
+  // otro modo, porque la columna Turno de His_CT_Group viene con el mismo valor
+  // en todas las filas ("1-NOCHE" en las 1.919 del corte real), así que no
+  // sirve para partir nada. El reparto por turno de verdad se saca del horario
+  // Inicio/Fin (renderProduccionTurno) o de His_Paro_Groups.
+  renderBarChart("chartDisponibilidadTurnos", "Disponibilidad media por línea",
+    "Media SIMPLE de la columna Disponibilidad (%) que ya trae calculada His_CT_Group: cada tramo pesa igual dure 8 minutos o 4 horas. Orientativa — contrástala con tu reporte oficial.",
     lineas.map(l => ({ label: l.linea, value: l.disp.length ? l.disp.reduce((a, b) => a + b, 0) / l.disp.length : 0 }))
       .sort((a, b) => b.value - a.value),
     { formatValue: v => fmtPct(v, 1), color: cssVar("--s3") }

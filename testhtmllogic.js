@@ -557,6 +557,37 @@ check("y volver a cargar el segundo no duplica",
   sandbox.mergeParoRows(rows35).dup === 4296);
 
 /* ============================================================
+   Cambios de referencia — de qué artículo a qué artículo, por línea
+   ============================================================ */
+
+console.log("\n\n=== Cambios de referencia (His_Paro_Groups_s35) ===");
+check("esCambioReferencia reconoce los dos motivos de cambio y descarta el resto",
+  sandbox.esCambioReferencia("CAMBIO ORDEN DE FABRICACIÓN") === true &&
+  sandbox.esCambioReferencia("CAMBIO FORMATO") === true &&
+  sandbox.esCambioReferencia("CAMBIO MATERIAL AUXILIAR OPERATIVO") === false &&
+  sandbox.esCambioReferencia("CAMBIO DE TURNO") === false &&
+  sandbox.esCambioReferencia("") === false);
+
+const cambios35 = sandbox.changeoverEvents(rows35);
+check("changeoverEvents saca una fila por cada parada de cambio, sin perder ninguna",
+  cambios35.length === 601, cambios35.length + " cambios");
+check("cubre las 9 líneas del corte",
+  new Set(cambios35.map(c => c.linea)).size === 9);
+check("el tiempo total en cambios cuadra con la suma de esas 601 paradas",
+  sum(cambios35, "segundos") === sum(rows35.filter(r => sandbox.esCambioReferencia(r.motivo)), "segundos"),
+  fmtNum(sum(cambios35, "segundos") / 3600) + " h");
+check("el origen es el SKU de la parada anterior en esa línea, no el de la propia parada",
+  cambios35.every(c => !c.origen || c.origen !== c.destino || rows35.some(r => r.producto === c.origen)));
+check("solo se queda sin origen la primera parada de cada línea en el corte",
+  cambios35.filter(c => !c.origen).length === 46, cambios35.filter(c => !c.origen).length + " sin origen");
+check("cada cambio con origen apunta al producto de la parada inmediatamente anterior por hora, no a cualquiera",
+  cambios35.filter(c => c.origen).every(c => {
+    const deLaLinea = rows35.filter(r => r.linea === c.linea).sort((a, b) => a.inicio - b.inicio);
+    const i = deLaLinea.findIndex(r => r.inicio.getTime() === c.inicio.getTime() && r.motivo === c.motivo);
+    return i > 0 && deLaLinea[i - 1].producto === c.origen;
+  }));
+
+/* ============================================================
    Disponibilidad calculada desde las paradas
    ============================================================ */
 

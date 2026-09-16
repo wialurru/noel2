@@ -335,6 +335,9 @@
   #paroKpiRow:empty { display: none; }
   @media (max-width: 1180px) { #kpiRow, #paroKpiRow { grid-template-columns: repeat(3, 1fr); } }
   @media (max-width: 700px) { #kpiRow, #paroKpiRow { grid-template-columns: repeat(2, 1fr); } }
+  #cambiosKpiRow { flex-shrink: 0; display: grid; grid-template-columns: 1.35fr repeat(2, 1fr); gap: 10px; }
+  #cambiosKpiRow:empty { display: none; }
+  @media (max-width: 700px) { #cambiosKpiRow { grid-template-columns: repeat(2, 1fr); } }
   .stat-tile { padding: 11px 13px; border-left: 3px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
   .stat-tile.lead { border-left-color: var(--s1); }
   .stat-tile.ok { border-left-color: var(--good); }
@@ -663,6 +666,7 @@
         <span class="seg-label">Vista</span>
         <div class="seg" id="parosSeg" role="group" aria-label="Vista de paros">
           <button data-sub="motivos">Motivos (Pareto)</button>
+          <button data-sub="cambios">Cambios de referencia</button>
           <button data-sub="turnos">Turnos y disponibilidad</button>
         </div>
         <span class="seg-label" id="paroCatTitulo" hidden>Categoría</span>
@@ -691,6 +695,26 @@
           </div>
         </div>
         <div class="empty-note" id="motivosEmpty" hidden>Carga el CSV <strong>His_Paro_Groups</strong> (botón 📂 arriba a la derecha) para ver el Pareto de motivos de parada.</div>
+      </div>
+
+      <!-- Cambios de referencia: paradas de tipo "Cambio orden de fabricación" /
+           "Cambio formato" en His_Paro_Groups. El origen sale del SKU de la
+           parada inmediatamente anterior en esa misma línea, no de un campo
+           explícito de Mapex (que no existe). -->
+      <div class="paros-sub" data-sub="cambios">
+        <div class="motivos-wrap" id="cambiosGrid">
+          <div id="cambiosKpiRow"></div>
+          <div class="card chart-card" id="chartCambiosLinea"></div>
+          <div class="panel" id="panelCambios">
+            <header>
+              <h3>Cambios de referencia</h3>
+              <span class="sub">De qué artículo a qué artículo cambió cada línea, y cuánto duró cada cambio — clic en una fila para filtrar por su línea</span>
+              <span class="right row-count" id="countCambios"></span>
+            </header>
+            <div class="body flush"><div id="tableCambios"></div></div>
+          </div>
+        </div>
+        <div class="empty-note" id="cambiosEmpty" hidden>Carga el CSV <strong>His_Paro_Groups</strong> (botón 📂 arriba a la derecha) para ver los cambios de referencia.</div>
       </div>
 
       <!-- Turnos: necesita His_CT_Group -->
@@ -1217,6 +1241,16 @@ function categoriaParo(nivel2) {
   if (/\(AV\)/.test(t) || t.includes("AVERIA")) return "av";
   if (/\(TND\)/.test(t) || t.includes("NO DISPONIBLE")) return "tnd";
   return "otro";
+}
+
+// Mapex no trae un campo "de qué referencia a qué referencia": lo único que
+// distingue un cambio de artículo de un simple ajuste es el motivo de la
+// parada. "Cambio orden de fabricación" es el cambio de OF/producto en sí;
+// "Cambio formato" es un cambio de formato dentro de la misma línea (a veces
+// mismo artículo, a veces no) que también interesa ver como cambio.
+function esCambioReferencia(motivo) {
+  const t = String(motivo || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
+  return (t.includes("CAMBIO") && t.includes("ORDEN") && t.includes("FABRICACION")) || t.includes("CAMBIO FORMATO");
 }
 
 function canonTurno(v) {
@@ -1956,14 +1990,18 @@ function applyCtAvailability() {
   document.getElementById("tramosBlock").hidden = !hasCt;
   document.getElementById("motivosGrid").hidden = !hasParo;
   document.getElementById("motivosEmpty").hidden = hasParo;
+  document.getElementById("cambiosGrid").hidden = !hasParo;
+  document.getElementById("cambiosEmpty").hidden = hasParo;
 
   const tabParos = document.querySelector('#tabbar button[data-tab="paros"]');
   tabParos.disabled = !hasCt && !hasParo;
   tabParos.title = (hasCt || hasParo) ? "" : "Necesita el CSV His_CT_Group o His_Paro_Groups";
 
   const btnMotivos = document.querySelector('#parosSeg button[data-sub="motivos"]');
+  const btnCambios = document.querySelector('#parosSeg button[data-sub="cambios"]');
   const btnTurnos = document.querySelector('#parosSeg button[data-sub="turnos"]');
   btnMotivos.title = hasParo ? "" : "Necesita el CSV His_Paro_Groups";
+  btnCambios.title = hasParo ? "" : "Necesita el CSV His_Paro_Groups";
   btnTurnos.title = hasCt ? "" : "Necesita el CSV His_CT_Group";
   // Si solo hay uno de los dos, abrir directamente el que tiene datos en vez de
   // dejar al usuario mirando un panel vacío.
@@ -4269,6 +4307,102 @@ function renderTableParoOf(data, sinOf) {
   });
 }
 
+/* ============================================================
+   10.3 CAMBIOS DE REFERENCIA (His_Paro_Groups) — de qué artículo a qué
+   artículo cambió cada línea, y cuánto duró cada cambio
+   ============================================================ */
+
+// Una fila por cada parada de tipo "cambio" (ver esCambioReferencia), con el
+// origen tomado del SKU de la parada anterior en esa misma línea (ordenadas
+// por hora de inicio dentro de la selección actual). Si es la primera parada
+// de la línea en la selección no hay origen que mostrar.
+function changeoverEvents(paroRows) {
+  const porLinea = new Map();
+  for (const r of paroRows) {
+    if (!porLinea.has(r.linea)) porLinea.set(r.linea, []);
+    porLinea.get(r.linea).push(r);
+  }
+  const out = [];
+  for (const filas of porLinea.values()) {
+    filas.sort((a, b) => (a.inicio ? a.inicio.getTime() : 0) - (b.inicio ? b.inicio.getTime() : 0));
+    filas.forEach((r, i) => {
+      if (!esCambioReferencia(r.motivo)) return;
+      const previa = i > 0 ? filas[i - 1] : null;
+      out.push({
+        linea: r.linea, area: r.area, turno: r.turnoRaw, of: r.of, lote: r.lote,
+        inicio: r.inicio, fin: r.fin, segundos: r.segundos, motivo: r.motivo,
+        origen: previa ? previa.producto : "", origenDesc: previa ? previa.desc : "",
+        destino: r.producto, destinoDesc: r.desc
+      });
+    });
+  }
+  return out.sort((a, b) => (b.inicio ? b.inicio.getTime() : 0) - (a.inicio ? a.inicio.getTime() : 0));
+}
+
+function renderTableCambios(data) {
+  const el = document.getElementById("tableCambios");
+  setCount("countCambios", data.length ? `${fmtInt(data.length)} cambios` : "");
+  if (!data.length) { el.innerHTML = `<div class="empty-note">Sin cambios de referencia para la selección.</div>`; return; }
+  const hora = d => d ? String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0") : "—";
+  const fecha = d => d ? d.toISOString().slice(0, 10) : "—";
+  const top = data.slice(0, 200);
+  const rows = top.map(d => `
+    <tr class="row-clickable" data-linea="${escapeHtml(d.linea)}">
+      <td>${escapeHtml(d.linea)}</td>
+      <td>${fecha(d.inicio)} ${hora(d.inicio)}–${hora(d.fin)}</td>
+      <td>${escapeHtml(d.turno)}</td>
+      <td title="${escapeHtml(d.origenDesc || d.origen)}">${escapeHtml(d.origen || "—")}</td>
+      <td title="${escapeHtml(d.destinoDesc || d.destino)}">${escapeHtml(d.destino || "—")}</td>
+      <td>${fmtDur(d.segundos)}</td>
+      <td>${escapeHtml(d.of || "—")}</td>
+    </tr>`).join("");
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Línea</th><th>Horario</th><th>Turno</th><th>De</th><th>A</th><th>Duración</th><th>OF</th>
+    </tr></thead>
+    <tbody>${rows}</tbody></table>` +
+    (data.length > top.length ? `<div class="empty-note">Mostrando los ${top.length} cambios más recientes de ${fmtInt(data.length)}.</div>` : "");
+
+  el.querySelectorAll("tr.row-clickable").forEach(tr => {
+    tr.addEventListener("click", () => focusLinea(tr.dataset.linea, "paros"));
+  });
+}
+
+function renderCambios(paroRows) {
+  const cambios = changeoverEvents(paroRows);
+  const el = document.getElementById("cambiosKpiRow");
+  const totalSeg = sum(cambios, r => r.segundos);
+  const mediaMin = cambios.length ? (totalSeg / cambios.length) / 60 : 0;
+  const porLinea = [...new Set(cambios.map(c => c.linea))]
+    .map(l => ({ linea: l, n: cambios.filter(c => c.linea === l).length, segundos: sum(cambios.filter(c => c.linea === l), c => c.segundos) }))
+    .sort((a, b) => b.n - a.n);
+  const top = porLinea[0];
+
+  el.innerHTML = !cambios.length ? "" : `
+    <div class="card stat-tile lead">
+      <div class="label">Cambios de referencia</div>
+      <div class="value">${fmtInt(cambios.length)}</div>
+      <div class="sub">${new Set(cambios.map(c => c.linea)).size} líneas afectadas</div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Tiempo total en cambios</div>
+      <div class="value" style="font-size:18px;">${fmtDur(totalSeg)}</div>
+      <div class="sub">media ${fmtInt(mediaMin)} min por cambio</div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Línea con más cambios</div>
+      <div class="value" style="font-size:18px;">${top ? escapeHtml(top.linea) : "—"}</div>
+      <div class="sub">${top ? fmtInt(top.n) + " cambios · " + fmtDur(top.segundos) : ""}</div>
+    </div>`;
+
+  renderBarChart("chartCambiosLinea", "Tiempo en cambios por línea", "Suma de la duración de cada cambio de referencia, por línea",
+    porLinea.map(l => ({ label: l.linea, value: l.segundos })),
+    { formatValue: v => fmtDur(v), color: cssVar("--s2"), tooltip: d => fmtInt(porLinea.find(l => l.linea === d.label).n) + " cambios · " + fmtDur(d.value) }
+  );
+
+  renderTableCambios(cambios);
+}
+
 // Apila el tiempo de una línea/turno por las cuatro categorías.
 function segmentosPorCategoria(filas) {
   return PARO_CATS.map(c => ({
@@ -4966,6 +5100,7 @@ function renderAll(skipFilters) {
   const paroFiltered = state.paroRows.length ? getFilteredParoRows() : [];
   if (state.paroRows.length) {
     renderMotivos(paroFiltered, rows);
+    renderCambios(paroFiltered);
     renderParosPorTurno(paroFiltered);
     setCount("parosHint", `${fmtInt(paroFiltered.length)} paradas en la selección · ${fmtDur(sum(paroFiltered, r => r.segundos))} parados`);
   } else {

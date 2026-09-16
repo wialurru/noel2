@@ -192,7 +192,7 @@
   #paroResumen { flex-shrink: 0; font-size: 11.5px; color: var(--text-muted); padding: 0 2px; }
   #paroResumen:empty { display: none; }
   #paroResumen strong { color: var(--text-primary); font-weight: 600; }
-  #panelParoOf { flex: 0 0 32%; }
+  #panelParoOf, #panelCambios { flex: 0 0 32%; }
   /* Histórico de merma del artículo buscado: se lleva algo menos de la mitad
      de la pestaña Detalle, y solo mientras haya búsqueda activa. */
   #chartMermaArticulo { flex: 0 0 42%; }
@@ -335,8 +335,9 @@
   #paroKpiRow:empty { display: none; }
   @media (max-width: 1180px) { #kpiRow, #paroKpiRow { grid-template-columns: repeat(3, 1fr); } }
   @media (max-width: 700px) { #kpiRow, #paroKpiRow { grid-template-columns: repeat(2, 1fr); } }
-  #cambiosKpiRow { flex-shrink: 0; display: grid; grid-template-columns: 1.35fr repeat(2, 1fr); gap: 10px; }
+  #cambiosKpiRow { flex-shrink: 0; display: grid; grid-template-columns: 1.35fr repeat(3, 1fr); gap: 10px; }
   #cambiosKpiRow:empty { display: none; }
+  @media (max-width: 1180px) { #cambiosKpiRow { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 700px) { #cambiosKpiRow { grid-template-columns: repeat(2, 1fr); } }
   .stat-tile { padding: 11px 13px; border-left: 3px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
   .stat-tile.lead { border-left-color: var(--s1); }
@@ -671,6 +672,8 @@
         </div>
         <span class="seg-label" id="paroCatTitulo" hidden>Categoría</span>
         <div class="seg" id="paroCatSeg" role="group" aria-label="Categoría de parada" hidden></div>
+        <span class="seg-label" id="cambioTipoTitulo" hidden>Tipo de cambio</span>
+        <div class="seg" id="cambioTipoSeg" role="group" aria-label="Tipo de cambio" hidden></div>
         <span class="row-count" id="parosHint"></span>
       </div>
 
@@ -697,18 +700,25 @@
         <div class="empty-note" id="motivosEmpty" hidden>Carga el CSV <strong>His_Paro_Groups</strong> (botón 📂 arriba a la derecha) para ver el Pareto de motivos de parada.</div>
       </div>
 
-      <!-- Cambios de referencia: paradas de tipo "Cambio orden de fabricación" /
-           "Cambio formato" en His_Paro_Groups. El origen sale del SKU de la
-           parada inmediatamente anterior en esa misma línea, no de un campo
-           explícito de Mapex (que no existe). -->
+      <!-- Cambios de referencia: cualquier parada cuyo motivo empiece por
+           "Cambio" (orden de fabricación, formato, molde, etiqueta, material
+           auxiliar…) salvo el cambio de turno, que no es un cambio de
+           producción. El origen sale del SKU de la parada inmediatamente
+           anterior en esa misma línea, no de un campo explícito de Mapex
+           (que no existe). El tipo distingue cada motivo de cambio por
+           separado: no todos duran ni cuestan lo mismo. -->
       <div class="paros-sub" data-sub="cambios">
         <div class="motivos-wrap" id="cambiosGrid">
           <div id="cambiosKpiRow"></div>
-          <div class="card chart-card" id="chartCambiosLinea"></div>
+          <div id="cambiosResumen"></div>
+          <div class="grid-side">
+            <div class="card chart-card" id="chartParetoCambios"></div>
+            <div class="card chart-card" id="chartCambiosLinea"></div>
+          </div>
           <div class="panel" id="panelCambios">
             <header>
               <h3>Cambios de referencia</h3>
-              <span class="sub">De qué artículo a qué artículo cambió cada línea, y cuánto duró cada cambio — clic en una fila para filtrar por su línea</span>
+              <span class="sub">De qué artículo a qué artículo cambió cada línea, con el tipo y cuánto duró cada cambio — clic en una fila para filtrar por su línea</span>
               <span class="right row-count" id="countCambios"></span>
             </header>
             <div class="body flush"><div id="tableCambios"></div></div>
@@ -1244,13 +1254,15 @@ function categoriaParo(nivel2) {
 }
 
 // Mapex no trae un campo "de qué referencia a qué referencia": lo único que
-// distingue un cambio de artículo de un simple ajuste es el motivo de la
-// parada. "Cambio orden de fabricación" es el cambio de OF/producto en sí;
-// "Cambio formato" es un cambio de formato dentro de la misma línea (a veces
-// mismo artículo, a veces no) que también interesa ver como cambio.
+// distingue un cambio (de OF, de formato, de molde, de etiqueta, de material
+// auxiliar…) de un simple ajuste es que el motivo empieza por "Cambio". No se
+// enumeran los tipos a mano porque varían de planta a planta — cualquier
+// motivo de cambio nuevo que traiga Mapex entra solo. El único que se excluye
+// a propósito es el cambio de turno: es un relevo de operarios, no un cambio
+// de producción.
 function esCambioReferencia(motivo) {
   const t = String(motivo || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
-  return (t.includes("CAMBIO") && t.includes("ORDEN") && t.includes("FABRICACION")) || t.includes("CAMBIO FORMATO");
+  return t.includes("CAMBIO") && !t.includes("CAMBIO DE TURNO") && !t.includes("CAMBIO TURNO");
 }
 
 function canonTurno(v) {
@@ -1327,6 +1339,7 @@ const state = {
     detalleSub: "articulo", // sub-tabla activa en Detalle
     parosSub: "motivos",   // sub-vista activa en Paros
     paroCat: "todas",      // categoría de parada del Pareto: todas|pnp|pp|av|tnd
+    cambioTipo: "todos",   // tipo de cambio en la vista de Cambios: todos|<motivo>
     // Drill-down del histórico de merma: null = todo; con semana = los días de
     // esa semana; con día = las OF de ese día. `busqueda` recuerda para qué
     // texto se abrió, para no dejar un drill colgado al buscar otra cosa.
@@ -1556,6 +1569,7 @@ function setParosSub(sub) {
   document.querySelectorAll("#parosSeg button").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
   document.querySelectorAll(".paros-sub").forEach(g => g.classList.toggle("active", g.dataset.sub === sub));
   syncParoCatVisible();
+  syncCambioTipoVisible();
 }
 
 // El filtro de categoría solo manda sobre el Pareto de motivos; en la vista de
@@ -1572,6 +1586,19 @@ function syncParoCatVisible() {
 function setParoCat(cat) {
   state.ui.paroCat = cat;
   document.querySelectorAll("#paroCatSeg button").forEach(b => b.classList.toggle("active", b.dataset.cat === cat));
+  renderAll(true);
+}
+
+// Mismo patrón que paroCatSeg pero para el tipo de cambio, y solo vive en la
+// vista de Cambios de referencia.
+function syncCambioTipoVisible() {
+  const visible = state.paroRows.length > 0 && state.ui.parosSub === "cambios";
+  document.getElementById("cambioTipoSeg").hidden = !visible;
+  document.getElementById("cambioTipoTitulo").hidden = !visible;
+}
+
+function setCambioTipo(tipo) {
+  state.ui.cambioTipo = tipo;
   renderAll(true);
 }
 
@@ -2007,7 +2034,7 @@ function applyCtAvailability() {
   // dejar al usuario mirando un panel vacío.
   if (hasParo && !hasCt) setParosSub("motivos");
   else if (hasCt && !hasParo && state.ui.parosSub === "motivos") setParosSub("turnos");
-  else syncParoCatVisible();
+  else { syncParoCatVisible(); syncCambioTipoVisible(); }
 }
 
 document.getElementById("btnReset").addEventListener("click", () => location.reload());
@@ -4351,6 +4378,7 @@ function renderTableCambios(data) {
       <td>${escapeHtml(d.linea)}</td>
       <td>${fecha(d.inicio)} ${hora(d.inicio)}–${hora(d.fin)}</td>
       <td>${escapeHtml(d.turno)}</td>
+      <td title="${escapeHtml(d.motivo)}">${escapeHtml(truncate(d.motivo, 26))}</td>
       <td title="${escapeHtml(d.origenDesc || d.origen)}">${escapeHtml(d.origen || "—")}</td>
       <td title="${escapeHtml(d.destinoDesc || d.destino)}">${escapeHtml(d.destino || "—")}</td>
       <td>${fmtDur(d.segundos)}</td>
@@ -4358,7 +4386,7 @@ function renderTableCambios(data) {
     </tr>`).join("");
   el.innerHTML = `<table>
     <thead><tr>
-      <th>Línea</th><th>Horario</th><th>Turno</th><th>De</th><th>A</th><th>Duración</th><th>OF</th>
+      <th>Línea</th><th>Horario</th><th>Turno</th><th>Tipo</th><th>De</th><th>A</th><th>Duración</th><th>OF</th>
     </tr></thead>
     <tbody>${rows}</tbody></table>` +
     (data.length > top.length ? `<div class="empty-note">Mostrando los ${top.length} cambios más recientes de ${fmtInt(data.length)}.</div>` : "");
@@ -4368,36 +4396,78 @@ function renderTableCambios(data) {
   });
 }
 
+// Mismo patrón que renderParoCatSeg: los botones salen de los tipos de cambio
+// que traiga el CSV cargado (no hay lista fija — cada planta usa los suyos), y
+// siempre a partir de TODOS los cambios de la selección, no de los ya
+// filtrados por tipo, para que los totales no cambien al elegir uno.
+function renderCambioTipoSeg(todosLosCambios) {
+  const el = document.getElementById("cambioTipoSeg");
+  const tipos = aggregateParos(todosLosCambios, r => r.motivo);
+  const total = sum(todosLosCambios, r => r.segundos);
+  const tipo = state.ui.cambioTipo;
+  el.innerHTML = `<button data-tipo="todos" class="${tipo === "todos" ? "active" : ""}" title="Todos los tipos de cambio juntos">Todos <span class="row-count">${fmtDur(total)}</span></button>` +
+    tipos.map(t => `<button data-tipo="${escapeHtml(t.key)}" class="${tipo === t.key ? "active" : ""}" title="${escapeHtml(t.key)}">${escapeHtml(truncate(t.key, 22))} <span class="row-count">${fmtDur(t.segundos)}</span></button>`).join("");
+  el.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => setCambioTipo(b.dataset.tipo));
+  });
+}
+
 function renderCambios(paroRows) {
-  const cambios = changeoverEvents(paroRows);
+  const todosLosCambios = changeoverEvents(paroRows);
+  renderCambioTipoSeg(todosLosCambios);
+  const tipo = state.ui.cambioTipo;
+  const cambios = tipo === "todos" ? todosLosCambios : todosLosCambios.filter(c => c.motivo === tipo);
+
   const el = document.getElementById("cambiosKpiRow");
   const totalSeg = sum(cambios, r => r.segundos);
   const mediaMin = cambios.length ? (totalSeg / cambios.length) / 60 : 0;
+  // El tipo principal y el nº de tipos distintos se calculan SIEMPRE sobre
+  // todos los cambios, igual que el reparto por categoría en Motivos: si no,
+  // al filtrar por un tipo el "principal" sería siempre ese mismo.
+  const porTipo = withCumulative(aggregateParos(todosLosCambios, r => r.motivo));
+  const topTipo = porTipo[0];
   const porLinea = [...new Set(cambios.map(c => c.linea))]
     .map(l => ({ linea: l, n: cambios.filter(c => c.linea === l).length, segundos: sum(cambios.filter(c => c.linea === l), c => c.segundos) }))
-    .sort((a, b) => b.n - a.n);
-  const top = porLinea[0];
+    .sort((a, b) => b.segundos - a.segundos);
+  const topLinea = porLinea[0];
 
-  el.innerHTML = !cambios.length ? "" : `
+  el.innerHTML = !todosLosCambios.length ? "" : `
     <div class="card stat-tile lead">
-      <div class="label">Cambios de referencia</div>
+      <div class="label">${tipo === "todos" ? "Cambios de referencia" : escapeHtml(truncate(tipo, 24))}</div>
       <div class="value">${fmtInt(cambios.length)}</div>
       <div class="sub">${new Set(cambios.map(c => c.linea)).size} líneas afectadas</div>
     </div>
     <div class="card stat-tile">
-      <div class="label">Tiempo total en cambios</div>
+      <div class="label">Tiempo total</div>
       <div class="value" style="font-size:18px;">${fmtDur(totalSeg)}</div>
       <div class="sub">media ${fmtInt(mediaMin)} min por cambio</div>
     </div>
     <div class="card stat-tile">
+      <div class="label">Tipo principal</div>
+      <div class="value" style="font-size:15px;" title="${escapeHtml(topTipo ? topTipo.key : "")}">${topTipo ? escapeHtml(truncate(topTipo.key, 20)) : "—"}</div>
+      <div class="sub">${topTipo ? fmtDur(topTipo.segundos) + " (" + fmtPct(topTipo.pct, 1) + ")" : ""}</div>
+    </div>
+    <div class="card stat-tile">
       <div class="label">Línea con más cambios</div>
-      <div class="value" style="font-size:18px;">${top ? escapeHtml(top.linea) : "—"}</div>
-      <div class="sub">${top ? fmtInt(top.n) + " cambios · " + fmtDur(top.segundos) : ""}</div>
+      <div class="value" style="font-size:18px;">${topLinea ? escapeHtml(topLinea.linea) : "—"}</div>
+      <div class="sub">${topLinea ? fmtInt(topLinea.n) + " cambios · " + fmtDur(topLinea.segundos) : ""}</div>
     </div>`;
 
-  renderBarChart("chartCambiosLinea", "Tiempo en cambios por línea", "Suma de la duración de cada cambio de referencia, por línea",
+  document.getElementById("cambiosResumen").innerHTML = !todosLosCambios.length ? "" :
+    `<span class="row-count">${fmtInt(porTipo.length)} tipos de cambio distintos · ` +
+    `${new Set(todosLosCambios.map(c => c.linea)).size} líneas · ` +
+    `${new Set(todosLosCambios.map(c => c.of).filter(Boolean)).size} OF afectadas</span>`;
+
+  renderParetoChart("chartParetoCambios", "Cambios por tipo",
+    `${fmtDur(sum(todosLosCambios, r => r.segundos))} en ${fmtInt(todosLosCambios.length)} cambios · ordenado por tiempo, no por número de veces`,
+    porTipo.map(t => ({ ...t, label: t.key })),
+    { limit: 12, color: cssVar("--s2") }
+  );
+
+  renderBarChart("chartCambiosLinea", "Tiempo en cambios por línea",
+    tipo === "todos" ? "Suma de la duración de cada cambio de referencia, por línea" : `Solo «${tipo}» — suma de la duración de cada cambio, por línea`,
     porLinea.map(l => ({ label: l.linea, value: l.segundos })),
-    { formatValue: v => fmtDur(v), color: cssVar("--s2"), tooltip: d => fmtInt(porLinea.find(l => l.linea === d.label).n) + " cambios · " + fmtDur(d.value) }
+    { formatValue: v => fmtDur(v), color: cssVar("--s1"), tooltip: d => fmtInt(porLinea.find(l => l.linea === d.label).n) + " cambios · " + fmtDur(d.value) }
   );
 
   renderTableCambios(cambios);

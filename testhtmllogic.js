@@ -561,31 +561,58 @@ check("y volver a cargar el segundo no duplica",
    ============================================================ */
 
 console.log("\n\n=== Cambios de referencia (His_Paro_Groups_s35) ===");
-check("esCambioReferencia reconoce los dos motivos de cambio y descarta el resto",
+check("esCambioReferencia reconoce cualquier motivo que empiece por Cambio, salvo el de turno",
   sandbox.esCambioReferencia("CAMBIO ORDEN DE FABRICACIÓN") === true &&
   sandbox.esCambioReferencia("CAMBIO FORMATO") === true &&
-  sandbox.esCambioReferencia("CAMBIO MATERIAL AUXILIAR OPERATIVO") === false &&
+  sandbox.esCambioReferencia("CAMBIO MOLDES") === true &&
+  sandbox.esCambioReferencia("CAMBIO CUCHILLA") === true &&
+  sandbox.esCambioReferencia("CAMBIO MATERIAL AUXILIAR OPERATIVO") === true &&
   sandbox.esCambioReferencia("CAMBIO DE TURNO") === false &&
   sandbox.esCambioReferencia("") === false);
 
+// Objetivo medido sobre el CSV real: el corte s35 trae 6 tipos de cambio
+// distintos (OF, formato, molde, cuchilla, material auxiliar y OF+limpieza),
+// justo el caso — varios tipos de cambio a la vez — que la vista tiene que
+// diferenciar en vez de mezclar en un único "cambio".
+const TIPOS_CAMBIO_ESPERADOS = {
+  "CAMBIO ORDEN DE FABRICACIÓN": 557,
+  "CAMBIO MATERIAL AUXILIAR OPERATIVO": 386,
+  "CAMBIO FORMATO": 44,
+  "CAMBIO MOLDES": 26,
+  "CAMBIO ORDEN FAB + LIMPIEZA OPERATIVA": 16,
+  "CAMBIO CUCHILLA": 4
+};
 const cambios35 = sandbox.changeoverEvents(rows35);
 check("changeoverEvents saca una fila por cada parada de cambio, sin perder ninguna",
-  cambios35.length === 601, cambios35.length + " cambios");
+  cambios35.length === 1033, cambios35.length + " cambios");
 check("cubre las 9 líneas del corte",
   new Set(cambios35.map(c => c.linea)).size === 9);
-check("el tiempo total en cambios cuadra con la suma de esas 601 paradas",
+check("el tiempo total en cambios cuadra con la suma de esas 1.033 paradas",
   sum(cambios35, "segundos") === sum(rows35.filter(r => sandbox.esCambioReferencia(r.motivo)), "segundos"),
   fmtNum(sum(cambios35, "segundos") / 3600) + " h");
+for (const [motivo, n] of Object.entries(TIPOS_CAMBIO_ESPERADOS)) {
+  check(`   tipo «${motivo}»: ${n} cambios`,
+    cambios35.filter(c => c.motivo === motivo).length === n,
+    cambios35.filter(c => c.motivo === motivo).length + " cambios");
+}
+check("los 6 tipos suman el total, sin solapes ni huecos",
+  Object.values(TIPOS_CAMBIO_ESPERADOS).reduce((s, n) => s + n, 0) === cambios35.length);
 check("el origen es el SKU de la parada anterior en esa línea, no el de la propia parada",
   cambios35.every(c => !c.origen || c.origen !== c.destino || rows35.some(r => r.producto === c.origen)));
 check("solo se queda sin origen la primera parada de cada línea en el corte",
-  cambios35.filter(c => !c.origen).length === 46, cambios35.filter(c => !c.origen).length + " sin origen");
+  cambios35.filter(c => !c.origen).length === 80, cambios35.filter(c => !c.origen).length + " sin origen");
 check("cada cambio con origen apunta al producto de la parada inmediatamente anterior por hora, no a cualquiera",
   cambios35.filter(c => c.origen).every(c => {
     const deLaLinea = rows35.filter(r => r.linea === c.linea).sort((a, b) => a.inicio - b.inicio);
     const i = deLaLinea.findIndex(r => r.inicio.getTime() === c.inicio.getTime() && r.motivo === c.motivo);
     return i > 0 && deLaLinea[i - 1].producto === c.origen;
   }));
+
+const porTipoCambio = sandbox.aggregateParos(cambios35, r => r.motivo);
+check("aggregateParos reutilizado para el Pareto por tipo agrupa los 6 tipos",
+  porTipoCambio.length === 6, porTipoCambio.length + " tipos");
+check("y ordena de mayor a menor tiempo, como cualquier Pareto",
+  porTipoCambio.every((t, i) => i === 0 || t.segundos <= porTipoCambio[i - 1].segundos));
 
 /* ============================================================
    Disponibilidad calculada desde las paradas

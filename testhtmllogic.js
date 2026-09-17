@@ -646,6 +646,49 @@ check('plantaLabel traduce el código con el prefijo "N" a "Noel N", y deja el r
   sandbox.plantaLabel("N2") === "Noel 2" && sandbox.plantaLabel("N7") === "Noel 7" &&
   sandbox.plantaLabel("CZ") === "Cierzo" && sandbox.plantaLabel("XYZ") === "XYZ");
 
+// --- Informe PDF de cambios (render completo) ------------------------------
+// state.paroRows ya trae s31 + s35 mezclados (ver el bloque de dedup, más
+// arriba), así que se acota el filtro de fecha a la semana 35 para trabajar
+// con las cifras ya verificadas arriba.
+state.filters.desde = new Date(Date.UTC(2026, 7, 24));
+state.filters.hasta = new Date(Date.UTC(2026, 7, 28, 23, 59, 59));
+state.filters.areas = new Set(rows35.map(r => r.area));
+state.filters.lineas = new Set(rows35.map(r => r.linea));
+state.filters.turno = "ambos";
+state.filters.dia = "todos";
+try {
+  sandbox.renderPrintReportCambios();
+  const body = elMap.printReportBody.innerHTML;
+  check("renderPrintReportCambios pinta título, resumen y un bloque por línea sin romperse",
+    body.includes("Cambios de referencia") && body.includes("Resumen por línea") &&
+    body.includes("Los 2 cambios más largos de cada tipo"));
+  const bloques = (body.match(/class="report-block"/g) || []).length;
+  check("hay un bloque de detalle por cada una de las 9 líneas, más el resumen",
+    bloques === 10, bloques + " bloques");
+  check("las 9 líneas del corte aparecen como título de su propio bloque",
+    [...new Set(rows35.map(r => r.linea))].every(l => body.includes(`>${l}<`)));
+
+  // cambiosLineaTablaTop2 es lo que responde "los 2 cambios que más duraron de
+  // cada tipo": para N2_FIL_L15 (223 cambios en 5 tipos) tiene que traer como
+  // mucho 2 filas por tipo, nunca más, y siempre las de mayor duración.
+  const l15 = cambios35.filter(c => c.linea === "N2_FIL_L15");
+  const tiposL15 = sandbox.aggregateParos(l15, r => r.motivo);
+  const tablaTop2 = sandbox.cambiosLineaTablaTop2(l15);
+  // -1 porque la cabecera de la tabla también es un <tr>, sin datos de cambio.
+  const filasTop2 = (tablaTop2.match(/<tr>/g) || []).length - 1;
+  check("nunca trae más de 2 filas por tipo",
+    filasTop2 === tiposL15.reduce((s, t) => s + Math.min(2, l15.filter(c => c.motivo === t.key).length), 0),
+    filasTop2 + " filas para " + tiposL15.length + " tipos");
+  tiposL15.forEach(t => {
+    const esperados = l15.filter(c => c.motivo === t.key).sort((a, b) => b.segundos - a.segundos).slice(0, 2);
+    check(`   «${t.key}»: trae los más largos, no los primeros por fecha`,
+      esperados.every(c => tablaTop2.includes(sandbox.fmtDur(c.segundos))));
+  });
+} catch (err) {
+  check("renderPrintReportCambios no lanza excepción", false, err.message);
+  console.error(err);
+}
+
 /* ============================================================
    Disponibilidad calculada desde las paradas
    ============================================================ */

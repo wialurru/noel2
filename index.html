@@ -516,6 +516,12 @@
     html, body { overflow: visible; height: auto; }
     .no-print { display: none !important; }
     #dashboard, .topbar, .tabbar, #welcome, #personalView { display: none !important; }
+    /* .app fija height:100vh + overflow:hidden para el layout de pantalla del
+       dashboard (paneles con scroll interno). #printReport vive dentro de
+       .app, así que sin este reset el informe se recortaba a una sola página:
+       .print-report pasaba a position:static + overflow:visible, pero el
+       padre seguía cortando todo lo que no cupiera en un viewport. */
+    .app { height: auto; overflow: visible; }
     .print-report { padding: 0; position: static; overflow: visible; }
     @page { size: A4 landscape; margin: 10mm; }
   }
@@ -726,6 +732,7 @@
               <header>
                 <h3 id="tituloResumenCambios">Resumen por línea</h3>
                 <span class="sub">Número de cambios, tiempo total y tipo principal — clic en una fila para filtrar por ese bloque</span>
+                <span class="right"><button class="ghost" id="btnExportCambiosPdf" style="padding:2px 9px;font-size:11.5px;" title="Informe imprimible con el detalle de cada línea de la selección actual — desde ahí, Ctrl+P o &quot;Guardar como PDF&quot;.">🖨 Informe PDF</button></span>
                 <span class="right row-count" id="countResumenCambios"></span>
               </header>
               <div class="body flush"><div id="tableResumenCambios"></div></div>
@@ -2098,6 +2105,13 @@ document.getElementById("printBack").addEventListener("click", () => {
   document.getElementById("printReport").hidden = true;
 });
 document.getElementById("printNow").addEventListener("click", () => window.print());
+
+document.getElementById("btnExportCambiosPdf").addEventListener("click", () => {
+  state.printPersonalPair = null;
+  renderPrintReportCambios();
+  document.getElementById("printReport").hidden = false;
+  document.getElementById("printReport").scrollTop = 0;
+});
 
 /* ============================================================
    5. FILTROS
@@ -5368,6 +5382,13 @@ const REPORT_ROW_DEFS = [
 // El acumulado del año no lleva sobrepeso ni disponibilidad, igual que el PDF de referencia.
 const REPORT_ROW_DEFS_ACC = REPORT_ROW_DEFS.filter(r => r.label !== "Sobrepeso real (%)" && r.label !== "Disponibilidad (%)");
 
+const REPORT_CAMBIOS_ROW_DEFS = [
+  { label: "Nº de cambios", get: d => d.n, fmt: v => fmtInt(v) },
+  { label: "Tiempo total", get: d => d.segundos, fmt: v => fmtDur(v) },
+  { label: "Tiempo medio", get: d => d.mediaSeg, fmt: v => fmtDur(v) },
+  { label: "Tipo principal", get: d => d.tipoTop, fmt: v => v ? truncate(v, 26) : "—" }
+];
+
 // ¿Hay jornada de los DOS turnos guardada para esta línea y este día?
 // Es la condición para ofrecer el informe de jornada completa.
 function personalPareja(linea, fechaISO) {
@@ -5606,6 +5627,110 @@ function renderPrintReport() {
       conMerma.map(d => ({ label: d.producto + " · " + d.desc, value: d.mermaRealPct })),
       { formatValue: v => fmtPct(v), color: "#e34948" });
   }
+}
+
+/* ============================================================
+   12.5 INFORME DE CAMBIOS DE REFERENCIA (PDF)
+   Alcance = el filtro Planta/Área/Línea/Turno/Día/Fecha actual, igual que el
+   informe general: "7 líneas de Elaborado" es simplemente seleccionar esas 7
+   líneas arriba antes de pulsar el botón.
+   ============================================================ */
+
+// Todos los tipos de una línea, con nº de cambios, tiempo total y media —
+// reutiliza aggregateParos tal cual (ya viene ordenado de mayor a menor tiempo).
+function cambiosLineaTablaTipos(cambiosLinea) {
+  const porTipo = aggregateParos(cambiosLinea, r => r.motivo);
+  const filas = porTipo.map(t => `
+    <tr>
+      <td>${escapeHtml(t.key)}</td>
+      <td>${fmtInt(t.paradas)}</td>
+      <td>${fmtDur(t.segundos)}</td>
+      <td>${fmtDur(t.mediaSeg)}</td>
+    </tr>`).join("");
+  return `<table class="report-pivot">
+    <thead><tr><th>Tipo de cambio</th><th>Nº cambios</th><th>Tiempo total</th><th>Media</th></tr></thead>
+    <tbody>${filas}</tbody>
+  </table>`;
+}
+
+// Los 2 cambios que más duraron DE CADA TIPO (no los 2 más largos en total,
+// que dejarían fuera tipos con pocos cambios pero relevantes) — con hora para
+// saber el turno y de qué referencia a cuál pasó la línea.
+function cambiosLineaTablaTop2(cambiosLinea) {
+  const porTipo = aggregateParos(cambiosLinea, r => r.motivo);
+  const hora = d => d ? String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0") : "—";
+  const fecha = d => d ? d.toISOString().slice(0, 10) : "—";
+  let filas = "";
+  porTipo.forEach(t => {
+    const top2 = cambiosLinea.filter(c => c.motivo === t.key).sort((a, b) => b.segundos - a.segundos).slice(0, 2);
+    top2.forEach((c, i) => {
+      filas += `
+      <tr>
+        <td>${i === 0 ? escapeHtml(t.key) : ""}</td>
+        <td>${fecha(c.inicio)} ${hora(c.inicio)}–${hora(c.fin)}</td>
+        <td>${escapeHtml(c.turno)}</td>
+        <td>${escapeHtml(c.origen || "—")}</td>
+        <td>${escapeHtml(c.destino || "—")}</td>
+        <td>${fmtDur(c.segundos)}</td>
+        <td>${escapeHtml(c.of || "—")}</td>
+      </tr>`;
+    });
+  });
+  return `<table class="report-detail">
+    <thead><tr><th>Tipo</th><th>Horario</th><th>Turno</th><th>De</th><th>A</th><th>Duración</th><th>OF</th></tr></thead>
+    <tbody>${filas || `<tr><td colspan="7">Sin cambios de referencia.</td></tr>`}</tbody>
+  </table>`;
+}
+
+function renderPrintReportCambios() {
+  const cambiosAlcance = changeoverEvents(getFilteredParoRows());
+  const lineas = [...new Set(cambiosAlcance.map(c => c.linea))].sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  const areasEnScope = [...new Set(cambiosAlcance.map(c => c.area))];
+
+  let title;
+  if (!areasEnScope.length) title = "Informe de cambios de referencia";
+  else if (areasEnScope.length === 1) title = "Cambios de referencia — " + areaDisplayName(areasEnScope[0]);
+  else if (areasEnScope.length <= 4) title = "Cambios de referencia — " + areasEnScope.map(areaDisplayName).join(" + ");
+  else title = "Cambios de referencia — " + areasEnScope.length + " áreas seleccionadas";
+
+  const periodoLabel = state.filters.desde && state.filters.hasta
+    ? `${fmtDate(state.filters.desde)} – ${fmtDate(state.filters.hasta)}` : "—";
+  const turnoLabel = { ambos: "Ambos", manana: "Mañana", tarde: "Tarde" }[state.filters.turno];
+  const diaLabel = { todos: "Todos", laborables: "Laborables", finde: "Fin de semana" }[state.filters.dia];
+
+  const resumenLinea = resumenCambiosPor(cambiosAlcance, "linea")
+    .map(g => ({ ...g, linea: g.label }))
+    .sort((a, b) => a.linea.localeCompare(b.linea, "es", { numeric: true }));
+  const totalRow = { n: sum(resumenLinea, r => r.n), segundos: sum(resumenLinea, r => r.segundos) };
+  totalRow.mediaSeg = totalRow.n ? totalRow.segundos / totalRow.n : 0;
+  const porTipoGlobal = aggregateParos(cambiosAlcance, r => r.motivo);
+  totalRow.tipoTop = porTipoGlobal[0] ? porTipoGlobal[0].key : "";
+
+  let detalleHtml = "";
+  lineas.forEach(linea => {
+    const cambiosLinea = cambiosAlcance.filter(c => c.linea === linea);
+    detalleHtml += `
+      <div class="report-block">
+        <h2 class="report-h2">${escapeHtml(linea)}</h2>
+        <p class="report-sub">${fmtInt(cambiosLinea.length)} cambios · ${fmtDur(sum(cambiosLinea, r => r.segundos))} en total</p>
+        ${cambiosLineaTablaTipos(cambiosLinea)}
+        <p class="report-sub" style="margin-top:10px;">Los 2 cambios más largos de cada tipo</p>
+        ${cambiosLineaTablaTop2(cambiosLinea)}
+      </div>`;
+  });
+
+  const body = document.getElementById("printReportBody");
+  body.innerHTML = `
+    <h1 class="report-title">${escapeHtml(title)}</h1>
+    <p class="report-sub">${escapeHtml(periodoLabel)}</p>
+    <p class="report-meta">Turno: ${turnoLabel} · Día: ${diaLabel} · ${lineas.length} línea${lineas.length === 1 ? "" : "s"} · Generado el ${fmtDate(new Date())}</p>
+
+    <div class="report-block">
+      <h2 class="report-h2">Resumen por línea</h2>
+      ${resumenLinea.length ? reportPivotTable(resumenLinea, totalRow, "TOTAL", REPORT_CAMBIOS_ROW_DEFS) : `<p class="report-sub">Sin cambios de referencia para la selección actual.</p>`}
+    </div>
+    ${detalleHtml}
+  `;
 }
 
 /* ============================================================

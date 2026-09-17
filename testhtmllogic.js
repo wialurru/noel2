@@ -615,6 +615,38 @@ check("y ordena de mayor a menor tiempo, como cualquier Pareto",
   porTipoCambio.every((t, i) => i === 0 || t.segundos <= porTipoCambio[i - 1].segundos));
 
 /* ============================================================
+   Resumen de cambios por línea / área / planta
+   ============================================================ */
+
+console.log("\n\n=== Resumen de cambios por grupo ===");
+const resumenLinea = sandbox.resumenCambiosPor(cambios35, "linea");
+check("por línea da las 9 líneas del corte, sin perder ni duplicar cambios",
+  resumenLinea.length === 9 &&
+  resumenLinea.reduce((s, g) => s + g.n, 0) === 1033 &&
+  resumenLinea.reduce((s, g) => s + g.segundos, 0) === sum(cambios35, "segundos"),
+  resumenLinea.length + " líneas");
+check("ordena de mayor a menor tiempo total, no por nº de cambios",
+  resumenLinea.every((g, i) => i === 0 || g.segundos <= resumenLinea[i - 1].segundos));
+check("cada línea trae su tipo principal con el % correcto sobre su propio total",
+  resumenLinea.every(g => Math.abs(g.tipoTopSeg - g.tipos[0].segundos) < 1e-9 &&
+    Math.abs(g.tipoTopPct - 100 * g.tipoTopSeg / g.segundos) < 1e-6));
+
+const resumenArea = sandbox.resumenCambiosPor(cambios35, "area");
+check("por área agrupa las 9 líneas en las 2 áreas reales del corte (Fileteados/Elaborado)",
+  resumenArea.length === 2 &&
+  resumenArea.reduce((s, g) => s + g.n, 0) === 1033 &&
+  resumenArea.reduce((s, g) => s + g.lineas, 0) === 9,
+  resumenArea.map(g => g.label + ":" + g.lineas).join(", "));
+
+const resumenPlanta = sandbox.resumenCambiosPor(cambios35, "planta");
+check("por planta colapsa a Noel 2 (todo el corte es una sola planta N2)",
+  resumenPlanta.length === 1 && resumenPlanta[0].key === "N2" &&
+  resumenPlanta[0].label === "Noel 2" && resumenPlanta[0].lineas === 9 && resumenPlanta[0].n === 1033);
+check('plantaLabel traduce el código con el prefijo "N" a "Noel N", y deja el resto tal cual',
+  sandbox.plantaLabel("N2") === "Noel 2" && sandbox.plantaLabel("N7") === "Noel 7" &&
+  sandbox.plantaLabel("CZ") === "Cierzo" && sandbox.plantaLabel("XYZ") === "XYZ");
+
+/* ============================================================
    Disponibilidad calculada desde las paradas
    ============================================================ */
 

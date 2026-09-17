@@ -672,6 +672,12 @@
         </div>
         <span class="seg-label" id="paroCatTitulo" hidden>Categoría</span>
         <div class="seg" id="paroCatSeg" role="group" aria-label="Categoría de parada" hidden></div>
+        <span class="seg-label" id="cambioAgruparTitulo" hidden>Agrupar por</span>
+        <div class="seg" id="cambioAgruparSeg" role="group" aria-label="Agrupar cambios por" hidden>
+          <button data-nivel="linea" class="active">Línea</button>
+          <button data-nivel="area">Área</button>
+          <button data-nivel="planta">Planta</button>
+        </div>
         <span class="seg-label" id="cambioTipoTitulo" hidden>Tipo de cambio</span>
         <div class="seg" id="cambioTipoSeg" role="group" aria-label="Tipo de cambio" hidden></div>
         <span class="row-count" id="parosHint"></span>
@@ -712,12 +718,23 @@
           <div id="cambiosKpiRow"></div>
           <div id="cambiosResumen"></div>
           <div class="grid-side">
+            <!-- El resumen agrupado (Línea/Área/Planta, según el segmentado
+                 "Agrupar por") es lo que responde "cuántos cambios, cuánto
+                 tiempo y de qué tipo" por bloque de planta — clic en una fila
+                 filtra la selección global a ese bloque. -->
+            <div class="panel" id="panelResumenCambios">
+              <header>
+                <h3 id="tituloResumenCambios">Resumen por línea</h3>
+                <span class="sub">Número de cambios, tiempo total y tipo principal — clic en una fila para filtrar por ese bloque</span>
+                <span class="right row-count" id="countResumenCambios"></span>
+              </header>
+              <div class="body flush"><div id="tableResumenCambios"></div></div>
+            </div>
             <div class="card chart-card" id="chartParetoCambios"></div>
-            <div class="card chart-card" id="chartCambiosLinea"></div>
           </div>
           <div class="panel" id="panelCambios">
             <header>
-              <h3>Cambios de referencia</h3>
+              <h3>Detalle de cada cambio</h3>
               <span class="sub">De qué artículo a qué artículo cambió cada línea, con el tipo y cuánto duró cada cambio — clic en una fila para filtrar por su línea</span>
               <span class="right row-count" id="countCambios"></span>
             </header>
@@ -1340,6 +1357,7 @@ const state = {
     parosSub: "motivos",   // sub-vista activa en Paros
     paroCat: "todas",      // categoría de parada del Pareto: todas|pnp|pp|av|tnd
     cambioTipo: "todos",   // tipo de cambio en la vista de Cambios: todos|<motivo>
+    cambioAgrupar: "linea", // nivel del resumen de Cambios: linea|area|planta
     // Drill-down del histórico de merma: null = todo; con semana = los días de
     // esa semana; con día = las OF de ese día. `busqueda` recuerda para qué
     // texto se abrió, para no dejar un drill colgado al buscar otra cosa.
@@ -1570,6 +1588,7 @@ function setParosSub(sub) {
   document.querySelectorAll(".paros-sub").forEach(g => g.classList.toggle("active", g.dataset.sub === sub));
   syncParoCatVisible();
   syncCambioTipoVisible();
+  syncCambioAgruparVisible();
 }
 
 // El filtro de categoría solo manda sobre el Pareto de motivos; en la vista de
@@ -1596,6 +1615,24 @@ function syncCambioTipoVisible() {
   document.getElementById("cambioTipoSeg").hidden = !visible;
   document.getElementById("cambioTipoTitulo").hidden = !visible;
 }
+
+// El "Agrupar por" (Línea/Área/Planta) es un segmentado fijo (no se reconstruye
+// con los datos, a diferencia de Tipo), así que solo hay que mostrarlo/ocultarlo.
+function syncCambioAgruparVisible() {
+  const visible = state.paroRows.length > 0 && state.ui.parosSub === "cambios";
+  document.getElementById("cambioAgruparSeg").hidden = !visible;
+  document.getElementById("cambioAgruparTitulo").hidden = !visible;
+}
+
+function setCambioAgrupar(nivel) {
+  state.ui.cambioAgrupar = nivel;
+  document.querySelectorAll("#cambioAgruparSeg button").forEach(b => b.classList.toggle("active", b.dataset.nivel === nivel));
+  renderAll(true);
+}
+
+document.querySelectorAll("#cambioAgruparSeg button").forEach(btn => {
+  btn.addEventListener("click", () => setCambioAgrupar(btn.dataset.nivel));
+});
 
 function setCambioTipo(tipo) {
   state.ui.cambioTipo = tipo;
@@ -2034,7 +2071,7 @@ function applyCtAvailability() {
   // dejar al usuario mirando un panel vacío.
   if (hasParo && !hasCt) setParosSub("motivos");
   else if (hasCt && !hasParo && state.ui.parosSub === "motivos") setParosSub("turnos");
-  else { syncParoCatVisible(); syncCambioTipoVisible(); }
+  else { syncParoCatVisible(); syncCambioTipoVisible(); syncCambioAgruparVisible(); }
 }
 
 document.getElementById("btnReset").addEventListener("click", () => location.reload());
@@ -4412,11 +4449,95 @@ function renderCambioTipoSeg(todosLosCambios) {
   });
 }
 
+const NIVEL_CAMBIO_LABEL = { linea: "Línea", area: "Área", planta: "Planta" };
+const NIVEL_CAMBIO_PLURAL = { linea: "líneas", area: "áreas", planta: "plantas" };
+
+function claveResumenCambios(c, nivel) {
+  if (nivel === "planta") return plantaCode(c.area);
+  if (nivel === "area") return c.area;
+  return c.linea;
+}
+
+// El mismo cambio se puede leer a tres alturas: por línea (el detalle de
+// siempre), por área o por planta (el código antes del primer "_" en Área —
+// ver plantaCode). Sirve para preguntas del tipo "¿qué planta pierde más
+// tiempo en cambios de molde?" sin tener que sumar líneas a mano.
+function resumenCambiosPor(cambios, nivel) {
+  const map = new Map();
+  for (const c of cambios) {
+    const key = claveResumenCambios(c, nivel);
+    if (!key) continue;
+    let g = map.get(key);
+    if (!g) { g = { key, cambios: [], segundos: 0, tipos: new Map(), lineas: new Set() }; map.set(key, g); }
+    g.cambios.push(c);
+    g.segundos += c.segundos;
+    g.tipos.set(c.motivo, (g.tipos.get(c.motivo) || 0) + c.segundos);
+    g.lineas.add(c.linea);
+  }
+  return [...map.values()].map(g => {
+    const tipos = [...g.tipos.entries()].map(([tipo, segundos]) => ({ tipo, segundos })).sort((a, b) => b.segundos - a.segundos);
+    const top = tipos[0];
+    return {
+      key: g.key, label: nivel === "planta" ? plantaLabel(g.key) : g.key,
+      n: g.cambios.length, segundos: g.segundos,
+      mediaSeg: g.cambios.length ? g.segundos / g.cambios.length : 0,
+      lineas: g.lineas.size, tipos,
+      tipoTop: top ? top.tipo : "", tipoTopSeg: top ? top.segundos : 0,
+      tipoTopPct: top ? 100 * top.segundos / g.segundos : 0,
+      cambios: g.cambios
+    };
+  }).sort((a, b) => b.segundos - a.segundos);
+}
+
+// Clic en una fila del resumen filtra la selección global a ese bloque: por
+// línea reutiliza focusLinea; por área/planta arma el conjunto de áreas y
+// líneas a partir de los propios cambios del grupo, sin tener que rehacer el
+// árbol Planta/Área/Línea del selector.
+function focusGrupoCambios(nivel, key, cambiosDelGrupo) {
+  if (nivel === "linea") { focusLinea(key, "paros"); return; }
+  state.filters.areas = nivel === "area" ? new Set([key]) : new Set(cambiosDelGrupo.map(c => c.area));
+  state.filters.lineas = new Set(cambiosDelGrupo.map(c => c.linea));
+  renderFilters();
+  renderAll();
+  setTab("paros");
+}
+
+function renderTableResumenCambios(data, nivel) {
+  const el = document.getElementById("tableResumenCambios");
+  const label = NIVEL_CAMBIO_LABEL[nivel];
+  document.getElementById("tituloResumenCambios").textContent = `Resumen por ${label.toLowerCase()}`;
+  setCount("countResumenCambios", data.length ? `${fmtInt(data.length)} ${NIVEL_CAMBIO_PLURAL[nivel]}` : "");
+  if (!data.length) { el.innerHTML = `<div class="empty-note">Sin cambios de referencia para la selección.</div>`; return; }
+  const conLineas = nivel !== "linea";
+  const rows = data.map(d => `
+    <tr class="row-clickable" data-key="${escapeHtml(d.key)}">
+      <td>${escapeHtml(d.label)}</td>
+      ${conLineas ? `<td>${fmtInt(d.lineas)}</td>` : ""}
+      <td>${fmtInt(d.n)}</td>
+      <td>${fmtDur(d.segundos)}</td>
+      <td>${fmtDur(d.mediaSeg)}</td>
+      <td title="${escapeHtml(d.tipoTop)}">${escapeHtml(truncate(d.tipoTop, 20))} <span class="row-count">${fmtPct(d.tipoTopPct, 0)}</span></td>
+    </tr>`).join("");
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>${escapeHtml(label)}</th>
+      ${conLineas ? "<th>Líneas</th>" : ""}
+      <th>Cambios</th><th>Tiempo total</th><th>Media</th><th>Tipo principal</th>
+    </tr></thead>
+    <tbody>${rows}</tbody></table>`;
+
+  el.querySelectorAll("tr.row-clickable").forEach(tr => {
+    const grupo = data.find(d => d.key === tr.dataset.key);
+    tr.addEventListener("click", () => focusGrupoCambios(nivel, grupo.key, grupo.cambios));
+  });
+}
+
 function renderCambios(paroRows) {
   const todosLosCambios = changeoverEvents(paroRows);
   renderCambioTipoSeg(todosLosCambios);
   const tipo = state.ui.cambioTipo;
   const cambios = tipo === "todos" ? todosLosCambios : todosLosCambios.filter(c => c.motivo === tipo);
+  const nivel = state.ui.cambioAgrupar;
 
   const el = document.getElementById("cambiosKpiRow");
   const totalSeg = sum(cambios, r => r.segundos);
@@ -4426,10 +4547,9 @@ function renderCambios(paroRows) {
   // al filtrar por un tipo el "principal" sería siempre ese mismo.
   const porTipo = withCumulative(aggregateParos(todosLosCambios, r => r.motivo));
   const topTipo = porTipo[0];
-  const porLinea = [...new Set(cambios.map(c => c.linea))]
-    .map(l => ({ linea: l, n: cambios.filter(c => c.linea === l).length, segundos: sum(cambios.filter(c => c.linea === l), c => c.segundos) }))
-    .sort((a, b) => b.segundos - a.segundos);
-  const topLinea = porLinea[0];
+  const resumen = resumenCambiosPor(cambios, nivel);
+  const topGrupo = resumen[0];
+  const nivelLabel = NIVEL_CAMBIO_LABEL[nivel];
 
   el.innerHTML = !todosLosCambios.length ? "" : `
     <div class="card stat-tile lead">
@@ -4448,9 +4568,9 @@ function renderCambios(paroRows) {
       <div class="sub">${topTipo ? fmtDur(topTipo.segundos) + " (" + fmtPct(topTipo.pct, 1) + ")" : ""}</div>
     </div>
     <div class="card stat-tile">
-      <div class="label">Línea con más cambios</div>
-      <div class="value" style="font-size:18px;">${topLinea ? escapeHtml(topLinea.linea) : "—"}</div>
-      <div class="sub">${topLinea ? fmtInt(topLinea.n) + " cambios · " + fmtDur(topLinea.segundos) : ""}</div>
+      <div class="label">${escapeHtml(nivelLabel)} con más cambios</div>
+      <div class="value" style="font-size:18px;">${topGrupo ? escapeHtml(topGrupo.label) : "—"}</div>
+      <div class="sub">${topGrupo ? fmtInt(topGrupo.n) + " cambios · " + fmtDur(topGrupo.segundos) : ""}</div>
     </div>`;
 
   document.getElementById("cambiosResumen").innerHTML = !todosLosCambios.length ? "" :
@@ -4464,12 +4584,7 @@ function renderCambios(paroRows) {
     { limit: 12, color: cssVar("--s2") }
   );
 
-  renderBarChart("chartCambiosLinea", "Tiempo en cambios por línea",
-    tipo === "todos" ? "Suma de la duración de cada cambio de referencia, por línea" : `Solo «${tipo}» — suma de la duración de cada cambio, por línea`,
-    porLinea.map(l => ({ label: l.linea, value: l.segundos })),
-    { formatValue: v => fmtDur(v), color: cssVar("--s1"), tooltip: d => fmtInt(porLinea.find(l => l.linea === d.label).n) + " cambios · " + fmtDur(d.value) }
-  );
-
+  renderTableResumenCambios(resumen, nivel);
   renderTableCambios(cambios);
 }
 

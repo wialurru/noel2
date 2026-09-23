@@ -1006,7 +1006,11 @@ const PR_COLS = {
 const CT_COLS = {
   area: "Área", centro: "CentroTrabajo", periodo: "Periodo", turno: "Turno", producto: "Producto",
   desc: "Descripción producto", of: "OF",
+  // Pese al "(h)", en el export habitual esa columna viene en SEGUNDOS. El
+  // informe de Mapex con más columnas trae además "Tiempo línea operativa" en
+  // segundos y la "(h)" en horas de verdad: si está la de segundos, manda.
   tiempoTotal: "Tiempo Total", tiempoOperativa: "Tiempo línea operativa (h)",
+  tiempoOperativaSeg: "Tiempo línea operativa",
   disponibilidad: "Disponibilidad (%)", m: "M",
   // Preparación/Producción/Mantenimiento/Act6-Act12 existen en el esquema de Mapex
   // pero en esta planta siempre vienen vacías — el desglose real de paros está en
@@ -1152,7 +1156,8 @@ function mapCtRows(header, index, dataRows) {
       desc: (getCol(r, index, CT_COLS.desc) || "").trim(),
       of: (getCol(r, index, CT_COLS.of) || "").trim(),
       tiempoTotal: parseEsNumber(getCol(r, index, CT_COLS.tiempoTotal)) || 0,
-      tiempoOperativa: parseEsNumber(getCol(r, index, CT_COLS.tiempoOperativa)) || 0,
+      tiempoOperativa: parseEsNumber(getCol(r, index, CT_COLS.tiempoOperativaSeg) ??
+                                     getCol(r, index, CT_COLS.tiempoOperativa)) || 0,
       disponibilidad: parseEsNumber(getCol(r, index, CT_COLS.disponibilidad)),
       m: parseEsNumber(getCol(r, index, CT_COLS.m)) || 0,
       parosAjustes: parseEsNumber(getCol(r, index, CT_COLS.parosAjustes)) || 0,
@@ -1578,7 +1583,7 @@ function renderAjustes() {
       <label class="name" for="setDispOk">Disponibilidad “bien” (verde) a partir de</label>
       ${num("setDispOk", s.dispOk, 0, 100, 1, "%")}
     </div>
-    <p class="set-hint">Los umbrales se guardan en este navegador. La disponibilidad de Mapex es aproximada — contrástala con tu reporte oficial antes de usarla como cifra de cierre.</p>
+    <p class="set-hint">Los umbrales se guardan en este navegador. Con His_CT_Group cargado, la disponibilidad se calcula igual que Mapex (marcha ÷ tiempo línea operativa).</p>
   `;
 
   const bind = (id, key) => {
@@ -2428,29 +2433,30 @@ function weightedSobrepesoPct(rows) {
   return sp / kg * 100;
 }
 
-/* ---------- Disponibilidad calculada desde las paradas ----------
-   La columna Disponibilidad (%) de Mapex es exactamente M / Tiempo Total
-   (comprobado: coincide en las 1.919 filas del corte real con 0,00 pp de
-   desvío). El problema es el denominador: los tramos de His_CT_Group cubren
-   las 24 h del día natural (616 de 616 grupos línea+día suman 86.400 s), así
-   que esa cifra mide "qué parte del día entero estuvo la línea en marcha",
-   no la disponibilidad de la jornada. Por eso sale tan baja.
+/* ---------- Disponibilidad (misma fórmula que Mapex) ----------
+       Disponibilidad = marcha (M) / Tiempo línea operativa
 
-   Esta versión usa la definición OEE y solo tiempos reales:
+   Las dos columnas vienen en His_CT_Group, así que basta ese archivo.
+   Comprobado contra el informe de Mapex de la L3, turno de mañana del
+   22/09/2026: 8.072 s de marcha / 27.726 s de tiempo operativo = 29,1 %,
+   que es lo que da Mapex.
 
-       Disponibilidad = marcha / (marcha + PNP + PP + AV)
+   Antes se calculaba marcha / (marcha + paradas de His_Paro_Groups) y salía
+   un 41,9 % para ese mismo turno. Estaba mal porque His_Paro_Groups solo trae
+   las paradas REGISTRADAS: dentro de los tramos de PRODUCCIÓN hay mucho tiempo
+   en que la línea no marcha y nadie ha justificado (microparos, ritmo lento…),
+   y Mapex sí lo cuenta como tiempo perdido. En la L3 eran 8.451 s de 27.726.
 
-   El TND queda fuera de los dos lados —es tiempo no programado, y Mapex mismo
-   lo marca en PARO PROGRAMADO con DISPONIBILIDAD a cero—, así que no penaliza.
-   El denominador no asume ningún calendario: se construye con la marcha real
-   de His_CT_Group más las paradas de His_Paro_Groups, y da la ventana de
-   trabajo de verdad (~10-12 h/día en los datos reales, no 24).
+   Tampoco sirve la columna Disponibilidad (%) fila a fila: es M / Tiempo
+   Total, y el Tiempo Total cubre el día natural de 24 h, incluidos los turnos
+   cerrados. El Tiempo línea operativa deja fuera lo cerrado (TND), que no
+   penaliza.
 
-   Necesita LOS DOS archivos: sin His_CT_Group no hay tiempo de marcha, y sin
-   His_Paro_Groups no hay paradas que descontar. Devuelve null si falta alguno.
+   His_Paro_Groups ya no hace falta para la cifra; si está cargado, se usa
+   para separar cuánto del tiempo perdido está registrado como parada y cuánto
+   no (sinRegistrar), solo en las líneas y fechas que ese archivo cubre.
 */
 // Hasta dónde llega el archivo de paradas: qué líneas y qué fechas cubre.
-// Es imprescindible para no mezclar peras con manzanas — ver abajo.
 function coberturaParos(paroRows) {
   if (!paroRows.length) return null;
   let min = Infinity, max = -Infinity;
@@ -2463,22 +2469,24 @@ function coberturaParos(paroRows) {
 }
 
 function disponibilidadCalculada(ctRows, paroRows) {
-  const cob = coberturaParos(paroRows);
-  if (!cob) return null;
-  // Solo cuenta la marcha de las líneas y fechas que el archivo de paradas
-  // cubre. Sin esto se sumaba la marcha de las 73 líneas de His_CT_Group
-  // contra las paradas de las 9 que trae His_Paro_Groups, y salía un 97,6% que
-  // no significaba nada: casi todo el denominador era marcha sin paradas
-  // registradas simplemente porque ese archivo no llegaba hasta allí.
-  const ct = ctRows.filter(r => cob.lineas.has(r.linea) &&
-    r.periodo.getTime() >= cob.min && r.periodo.getTime() <= cob.max);
-  const marcha = sum(ct, r => r.m);
-  if (marcha <= 0) return null;
-  const penaliza = sum(paroRows.filter(r => r.categoria !== "tnd"), r => r.segundos);
-  const tnd = sum(paroRows.filter(r => r.categoria === "tnd"), r => r.segundos);
-  const den = marcha + penaliza;
-  if (den <= 0) return null;
-  return { pct: 100 * marcha / den, marcha, penaliza, tnd, ventana: den, lineas: cob.lineas.size };
+  const marcha = sum(ctRows, r => r.m);
+  const ventana = sum(ctRows, r => r.tiempoOperativa);
+  if (ventana <= 0) return null;
+  const out = { pct: 100 * marcha / ventana, marcha, ventana, perdido: Math.max(0, ventana - marcha),
+    penaliza: null, tnd: null, sinRegistrar: null };
+  const cob = paroRows && paroRows.length ? coberturaParos(paroRows) : null;
+  if (cob) {
+    // Solo se compara contra la parte de la marcha que el archivo de paradas
+    // cubre: con otras líneas o fechas en medio, lo "no registrado" saldría
+    // enorme solo porque ese archivo no llegaba hasta allí.
+    const ct = ctRows.filter(r => cob.lineas.has(r.linea) &&
+      r.periodo.getTime() >= cob.min && r.periodo.getTime() <= cob.max);
+    const perdidoCubierto = sum(ct, r => r.tiempoOperativa) - sum(ct, r => r.m);
+    out.penaliza = sum(paroRows.filter(r => r.categoria !== "tnd"), r => r.segundos);
+    out.tnd = sum(paroRows.filter(r => r.categoria === "tnd"), r => r.segundos);
+    out.sinRegistrar = Math.max(0, perdidoCubierto - out.penaliza);
+  }
+  return out;
 }
 
 // Lo mismo pero línea a línea, para las tablas y el gráfico.
@@ -2486,13 +2494,24 @@ function disponibilidadPorLinea(ctRows, paroRows) {
   const map = new Map();
   const dame = l => { if (!map.has(l)) map.set(l, { ct: [], paro: [] }); return map.get(l); };
   for (const r of ctRows) dame(r.linea).ct.push(r);
-  for (const r of paroRows) dame(r.linea).paro.push(r);
+  for (const r of (paroRows || [])) if (map.has(r.linea)) map.get(r.linea).paro.push(r);
   const out = new Map();
   for (const [linea, g] of map) {
     const d = disponibilidadCalculada(g.ct, g.paro);
     if (d) out.set(linea, d);
   }
   return out;
+}
+
+// Texto de detalle común al KPI, la tabla y el gráfico.
+function dispDetalle(d, sep) {
+  let t = `Marcha ${fmtDur(d.marcha)} ÷ tiempo línea operativa ${fmtDur(d.ventana)}` + sep +
+    `Tiempo perdido: ${fmtDur(d.perdido)}`;
+  if (d.penaliza !== null) {
+    t += sep + `· registrado como parada: ${fmtDur(d.penaliza)}` +
+      sep + `· sin registrar (microparos, ritmo…): ${fmtDur(d.sinRegistrar)}`;
+  }
+  return t;
 }
 
 function meanDisponibilidad(rows) {
@@ -2602,10 +2621,10 @@ function renderKpis(rows) {
   const mermaStd = weightedMermaStdPct(rows);
   const desviacion = (mermaReal !== null && mermaStd !== null) ? mermaReal - mermaStd : null;
   const sobrepeso = weightedSobrepesoPct(rows);
-  // Si están los dos archivos de paros, la disponibilidad se calcula sobre la
-  // jornada real; si no, se cae a la media de la columna de Mapex.
-  const dispCalc = (state.ctRows.length && state.paroRows.length)
-    ? disponibilidadCalculada(getFilteredCtRows(), getFilteredParoRows()) : null;
+  // Con His_CT_Group se calcula igual que Mapex (marcha / tiempo línea
+  // operativa); sin él, se cae a la media de la columna de ProductReport.
+  const dispCalc = state.ctRows.length
+    ? disponibilidadCalculada(getFilteredCtRows(), state.paroRows.length ? getFilteredParoRows() : []) : null;
   const disp = dispCalc ? dispCalc.pct : meanDisponibilidad(rows);
   const nOF = new Set(rows.map(r => r.of)).size;
 
@@ -2614,8 +2633,7 @@ function renderKpis(rows) {
   // El delta compara siempre la misma definición que el número de arriba.
   const rangoPrev = previousPeriodRange();
   const dispPrev = dispCalc
-    ? (rangoPrev ? (disponibilidadCalculada(ctRowsEnRango(rangoPrev.desde, rangoPrev.hasta),
-                                            paroRowsEnRango(rangoPrev.desde, rangoPrev.hasta)) || {}).pct ?? null : null)
+    ? (rangoPrev ? (disponibilidadCalculada(ctRowsEnRango(rangoPrev.desde, rangoPrev.hasta), []) || {}).pct ?? null : null)
     : (prev.length ? meanDisponibilidad(prev) : null);
 
   // La merma se juzga contra el estándar de Mapex, no contra un umbral inventado:
@@ -2644,8 +2662,8 @@ function renderKpis(rows) {
     {
       cls: dispStatus(disp), label: "Disponibilidad", value: fmtPct(disp, 1), valueCls: dispStatus(disp),
       hint: dispCalc
-        ? `Marcha ÷ (marcha + PNP + PP + AV), sobre la jornada real: ${fmtDur(dispCalc.marcha)} de marcha y ${fmtDur(dispCalc.penaliza)} de paradas que penalizan. El TND queda fuera. NO es la columna de Mapex, que divide entre el día natural de 24 h y por eso da bastante menos.`
-        : "Aproximada: media de la columna Disponibilidad (%) de Mapex por OF, que divide entre el día natural de 24 h. Carga His_CT_Group y His_Paro_Groups para calcularla sobre la jornada real.",
+        ? `Misma fórmula que Mapex: marcha ÷ tiempo línea operativa (el tiempo cerrado/TND queda fuera). ${dispDetalle(dispCalc, ". ")}.`
+        : "Aproximada: media de la columna Disponibilidad (%) de Mapex por OF, que divide entre el día natural de 24 h. Carga His_CT_Group para tener la cifra real de Mapex.",
       delta: trendBadge(disp, dispPrev, false, v => fmtPct(v, 1))
     },
     {
@@ -3104,16 +3122,16 @@ function mermaCellHtml(realPct, stdPct, desvPct, coverage) {
   return `<td>${fmtPct(realPct)}</td><td>${(stdPct === null || sinStd) ? "—" : fmtPct(stdPct)}</td><td>${badge}</td>`;
 }
 
-// Celda de disponibilidad: la calculada sobre la jornada real si hay con qué,
+// Celda de disponibilidad: la de Mapex (marcha / tiempo operativo) si hay con qué,
 // y si no la de Mapex marcada como tal, para que no se confundan dos cifras
 // que miden cosas distintas.
 function dispCell(d, calcPorLinea) {
   const c = calcPorLinea && calcPorLinea.get(d.linea);
   if (c) {
-    return `<td title="Marcha ${fmtDur(c.marcha)} ÷ jornada ${fmtDur(c.ventana)} (marcha + PNP + PP + AV)">${fmtPct(c.pct, 1)}</td>`;
+    return `<td title="${dispDetalle(c, ". ")}">${fmtPct(c.pct, 1)}</td>`;
   }
   if (d.disponibilidad === null) return `<td>—</td>`;
-  return `<td title="Columna de Mapex: marcha ÷ día natural de 24 h. Carga His_CT_Group y His_Paro_Groups para calcularla sobre la jornada real."><span style="color:var(--text-muted)">${fmtPct(d.disponibilidad, 1)}</span></td>`;
+  return `<td title="Columna de ProductReport: marcha ÷ día natural de 24 h. Carga His_CT_Group para tener la cifra real de Mapex."><span style="color:var(--text-muted)">${fmtPct(d.disponibilidad, 1)}</span></td>`;
 }
 
 function renderTableLinea(data, dispCalcPorLinea) {
@@ -3963,24 +3981,22 @@ function renderParos(ctRows, dibujarPareto) {
   // todas las filas ("1-NOCHE" en las 1.919 del corte real), así que no sirve
   // para partir nada. El reparto por turno de verdad se saca del horario
   // Inicio/Fin (renderProduccionTurno) o de His_Paro_Groups.
-  const calc = state.paroRows.length ? disponibilidadPorLinea(ctRows, getFilteredParoRows()) : new Map();
+  const calc = disponibilidadPorLinea(ctRows, state.paroRows.length ? getFilteredParoRows() : []);
   if (calc.size) {
     const items = [...calc.entries()].map(([linea, d]) => ({ label: linea, value: d.pct, d }))
       .sort((a, b) => b.value - a.value);
     renderBarChart("chartDisponibilidadTurnos", "Disponibilidad por línea",
-      "Marcha ÷ (marcha + PNP + PP + AV). El TND queda fuera: es tiempo no programado y no penaliza. Calculada con tiempos reales, no es la columna de Mapex.",
+      "Marcha ÷ tiempo línea operativa, igual que Mapex. El tiempo cerrado (TND) queda fuera y no penaliza; los microparos sin registrar sí.",
       items,
       { formatValue: v => fmtPct(v, 1), color: cssVar("--s3"),
-        tooltip: d => `${fmtPct(d.value, 1)} disponible<br>` +
-          `Marcha: ${fmtDur(d.d.marcha)}<br>Paradas que penalizan: ${fmtDur(d.d.penaliza)}<br>` +
-          `Ventana de trabajo: ${fmtDur(d.d.ventana)}` +
+        tooltip: d => `${fmtPct(d.value, 1)} disponible<br>` + dispDetalle(d.d, "<br>") +
           (d.d.tnd ? `<br>TND excluido: ${fmtDur(d.d.tnd)}` : "") }
     );
   } else {
-    // Sin His_Paro_Groups no hay paradas que descontar: se cae a la cifra de
-    // Mapex, avisando de que es otra cosa (divide entre el día natural).
+    // Tramos sin tiempo operativo (todo cerrado): se cae a la columna fila a
+    // fila, avisando de que es otra cosa (divide entre el día natural).
     renderBarChart("chartDisponibilidadTurnos", "Disponibilidad media por línea (Mapex)",
-      "Media simple de la columna Disponibilidad (%) de His_CT_Group, que Mapex calcula como marcha ÷ día natural de 24 h. Carga His_Paro_Groups para calcularla sobre la jornada real.",
+      "Media simple de la columna Disponibilidad (%) de His_CT_Group, que Mapex calcula como marcha ÷ día natural de 24 h.",
       lineas.map(l => ({ label: l.linea, value: l.disp.length ? l.disp.reduce((a, b) => a + b, 0) / l.disp.length : 0 }))
         .sort((a, b) => b.value - a.value),
       { formatValue: v => fmtPct(v, 1), color: cssVar("--baseline") }
@@ -4711,7 +4727,7 @@ const TENDENCIA_METRICAS = {
 // Las opciones que hoy no se pueden calcular se dejan desactivadas en vez de
 // ocultas: así se ve que existen y qué archivo hace falta para tenerlas.
 function tendenciaDisponible(id) {
-  if (id === "disp") return state.ctRows.length > 0 && state.paroRows.length > 0;
+  if (id === "disp") return state.ctRows.length > 0;
   if (id.startsWith("paros.")) return state.paroRows.length > 0;
   return true;
 }
@@ -4830,7 +4846,7 @@ function renderTendencia(rows, porLinea) {
   const dame = (linea, fecha) => {
     const p = clavePeriodo(fecha, grano);
     const k = linea + "||" + p.key;
-    if (!celdas.has(k)) celdas.set(k, { linea, day: p.orden, etiqueta: p.etiqueta, mmpp: 0, mermaKg: 0, kg: 0, uds: 0, sobreKg: 0, marcha: 0, penaliza: 0, seg: 0 });
+    if (!celdas.has(k)) celdas.set(k, { linea, day: p.orden, etiqueta: p.etiqueta, mmpp: 0, mermaKg: 0, kg: 0, uds: 0, sobreKg: 0, marcha: 0, ventana: 0, seg: 0 });
     return celdas.get(k);
   };
   for (const r of rows) {
@@ -4842,12 +4858,12 @@ function renderTendencia(rows, porLinea) {
   }
   if (id === "disp") for (const r of ct) {
     if (!entra(r.linea)) continue;
-    dame(clave(r.linea), r.periodo).marcha += r.m || 0;
+    const g = dame(clave(r.linea), r.periodo);
+    g.marcha += r.m || 0; g.ventana += r.tiempoOperativa || 0;
   }
-  if (id === "disp" || esParos) for (const r of paros) {
+  if (esParos) for (const r of paros) {
     if (!entra(r.linea)) continue;
     const g = dame(clave(r.linea), r.periodo);
-    if (r.categoria !== "tnd") g.penaliza += r.segundos;
     if (esParos && (id === "paros.todas" || id === "paros." + r.categoria)) g.seg += r.segundos;
   }
 
@@ -4857,8 +4873,8 @@ function renderTendencia(rows, porLinea) {
       case "prod.sobrepeso": return g.kg > 0 ? g.sobreKg / g.kg * 100 : null;
       case "prod.kg": return g.kg > 0 ? g.kg : null;
       case "prod.uds": return g.uds > 0 ? g.uds : null;
-      // Mismo cálculo que el KPI: marcha / (marcha + PNP + PP + AV), TND fuera.
-      case "disp": return g.marcha > 0 ? 100 * g.marcha / (g.marcha + g.penaliza) : null;
+      // Mismo cálculo que el KPI y que Mapex: marcha / tiempo línea operativa.
+      case "disp": return g.ventana > 0 ? 100 * g.marcha / g.ventana : null;
       default: return g.seg > 0 ? g.seg / 60 : null;
     }
   };
@@ -4945,8 +4961,8 @@ function renderAll(skipFilters) {
 
   renderTendencia(rows, porLinea);
 
-  const dispCalcLineas = (state.ctRows.length && state.paroRows.length)
-    ? disponibilidadPorLinea(getFilteredCtRows(), getFilteredParoRows()) : new Map();
+  const dispCalcLineas = state.ctRows.length
+    ? disponibilidadPorLinea(getFilteredCtRows(), state.paroRows.length ? getFilteredParoRows() : []) : new Map();
   renderTableLinea(porLinea, dispCalcLineas);
   renderTableArticulo(porArticulo);
   renderTableOF(rows);

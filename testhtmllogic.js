@@ -574,15 +574,13 @@ const desvios = conDisp.map(r => Math.abs(100 * r.m / r.tiempoTotal - r.disponib
 check("la columna Disponibilidad de Mapex es exactamente M / Tiempo Total",
   Math.max(...desvios) < 0.01, "desvío máximo " + Math.max(...desvios).toFixed(4) + " pp en " + conDisp.length + " filas");
 
-// Y el denominador es el día natural: los tramos cubren las 24 h
-const porLineaDia = new Map();
-ctRows.forEach(r => {
-  const k = r.linea + "|" + r.periodo.toISOString().slice(0, 10);
-  porLineaDia.set(k, (porLineaDia.get(k) || 0) + r.tiempoTotal);
-});
-const dias24 = [...porLineaDia.values()].filter(v => Math.abs(v - 86400) < 2).length;
-check("los tramos de His_CT_Group cubren el día natural completo (24 h)",
-  dias24 === porLineaDia.size, dias24 + " de " + porLineaDia.size + " grupos línea+día suman 86.400 s");
+// Los tramos se fechan por su hora real, no por el Periodo: repartirlos no
+// puede crear ni perder tiempo.
+const brutoTT = ctParsed.dataRows.reduce((acc, r) => acc + (sandbox.parseEsNumber(sandbox.getCol(r, ctParsed.index, "Tiempo Total")) || 0), 0);
+check("fechar los tramos por hora real conserva el tiempo total",
+  Math.abs(sum(ctRows, "tiempoTotal") - brutoTT) < 1e-6, fmtNum(brutoTT / 3600) + " h");
+check("cada tramo queda dentro de un solo turno de Mapex (noche/mañana/tarde)",
+  ctRows.filter(r => r.horaInicio && r.horaFin > r.horaInicio).every(r => ["noche", "manana", "tarde"].includes(r.turnoMapex)));
 
 // --- La fórmula (la de Mapex) ---------------------------------------------
 const dCalc = sandbox.disponibilidadCalculada(ctRows, paroRows);
@@ -647,6 +645,21 @@ const viejo = 100 * d22.marcha / (d22.marcha + d22.penaliza);
 check("la fórmula anterior daba el 41 % porque no veía los microparos sin registrar",
   Math.abs(viejo - 41.88) < 0.01 && Math.abs(d22.sinRegistrar - 8451) < 1,
   fmtNum(viejo) + " % · " + fmtNum(d22.sinRegistrar / 60) + " min sin registrar");
+
+// --- Contra el informe de Mapex por turno: 22/09/2026, tarde --------------
+// El export del día 22 trae con Periodo 22 tramos del 21 por la tarde; si se
+// sumaran, L02 daba 57,9 % (Mapex 50,5) y L04 57,6 % (Mapex 47,7).
+const ctTodo22 = leeCt("His_CT_Group DIA 22.csv");
+const dia22 = Date.UTC(2026, 8, 22);
+const tarde22 = ctTodo22.filter(r => r.periodo.getTime() === dia22 && r.turnoMapex === "tarde");
+const porLTarde = sandbox.disponibilidadPorLinea(tarde22, []);
+const mapexTarde = { N2_ELA_L01: 48.4, N2_ELA_L01B: 69.2, N2_ELA_L02: 50.5, N2_ELA_L03: 56.4, N2_ELA_L04: 47.7,
+  N2_FIL_L14: 82.8, N2_FIL_L15: 67.0, N2_FIL_L16: 75.4 };
+const difs = Object.entries(mapexTarde).map(([l, v]) => [l, porLTarde.get(l) ? Math.abs(porLTarde.get(l).pct - v) : 99]);
+check("la tarde del 22 cuadra con el informe de Mapex línea a línea",
+  difs.every(([, d]) => d < 0.06), difs.map(([l, d]) => l.replace("N2_", "") + " ±" + d.toFixed(2)).join(" "));
+check("los tramos del 21 que el export etiqueta como Periodo 22 se van al día 21",
+  ctTodo22.some(r => r.linea === "N2_ELA_L04" && r.periodo.getTime() === dia22 - 86400000 && r.turnoMapex === "tarde"));
 
 /* ============================================================
    Tendencia diaria con indicador elegible

@@ -1175,18 +1175,58 @@ function mapCtRows(header, index, dataRows) {
       semana: isoWeekInfo(periodo)
     });
   }
-  for (const row of out) {
-    if (row.horaInicio && row.horaFin && row.horaFin > row.horaInicio) {
-      const seg = shiftSecondsSplit(row.horaInicio.getTime(), row.horaFin.getTime());
-      const total = seg.manana + seg.tarde;
-      row.turnoSplit = total > 0
-        ? { manana: seg.manana / total, tarde: seg.tarde / total }
-        : { manana: 0, tarde: 0 };
-    } else {
-      row.turnoSplit = { manana: 0, tarde: 0 };
+  return out.flatMap(repartirTramoCt);
+}
+
+// El "Periodo" de His_CT_Group NO es el día del tramo: en el export del día 22
+// venían tramos del 21 por la tarde (L02 y L04 de 19 a 22 h, L06 de 17 a 22 h)
+// con Periodo 22 y Turno 3-TARDE, y se sumaban a la tarde del 22. Mapex, en su
+// informe por turno, se guía por la hora real. Así que cada tramo se fecha y
+// se asigna a turno por su Hora inicio / Hora fin, con el calendario de Mapex:
+//   noche  = 22:00 del día anterior -> 06:00   (cuenta para el día siguiente)
+//   mañana = 06:00 -> 14:00
+//   tarde  = 14:00 -> 22:00
+// Si un tramo cruzara un cambio de turno se parte y los tiempos se reparten en
+// proporción (en la práctica Mapex ya los corta en el cambio de turno).
+// Comprobado contra el informe de Mapex del 22/09, tarde: con esto cuadran al
+// 0,1 % las líneas cuyos tramos están completos en el export.
+const CT_TURNOS_MAPEX = [["noche", -2, 6], ["manana", 6, 14], ["tarde", 14, 22]];
+
+function turnoSplitDe(nombre) {
+  // El filtro de turno de la herramienta solo tiene mañana y tarde: la noche
+  // entra en "ambos" pero en ninguno de los dos, igual que en el informe de Mapex.
+  return { manana: nombre === "manana" ? 1 : 0, tarde: nombre === "tarde" ? 1 : 0 };
+}
+
+function repartirTramoCt(row) {
+  const ini = row.horaInicio && row.horaInicio.getTime();
+  const fin = row.horaFin && row.horaFin.getTime();
+  if (!(fin > ini)) {
+    row.turnoSplit = { manana: 0, tarde: 0 };
+    return [row];
+  }
+  const piezas = [];
+  // El día de producción empieza a las 22:00 del día anterior.
+  const dia0 = new Date(ini + 2 * 3600000); dia0.setUTCHours(0, 0, 0, 0);
+  for (let d = dia0.getTime(); d < fin + 2 * 3600000; d += 86400000) {
+    for (const [nombre, a, b] of CT_TURNOS_MAPEX) {
+      const oIni = Math.max(ini, d + a * 3600000), oFin = Math.min(fin, d + b * 3600000);
+      if (oFin > oIni) piezas.push({ nombre, dia: d, oIni, oFin });
     }
   }
-  return out;
+  return piezas.map(pz => {
+    const frac = (pz.oFin - pz.oIni) / (fin - ini);
+    const r = piezas.length === 1 ? row : { ...row };
+    if (piezas.length > 1) {
+      for (const f of CT_TURNO_FIELDS) r[f] = (row[f] || 0) * frac;
+      r.horaInicio = new Date(pz.oIni); r.horaFin = new Date(pz.oFin);
+    }
+    r.periodo = new Date(pz.dia);
+    r.semana = isoWeekInfo(r.periodo);
+    r.turnoMapex = pz.nombre;
+    r.turnoSplit = turnoSplitDe(pz.nombre);
+    return r;
+  });
 }
 
 // His_Paro_Groups sí trae el turno REAL de cada parada ("2-MAÑANA"/"3-TARDE"),

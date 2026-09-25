@@ -842,7 +842,7 @@ check("el total de todas las bandejas es la suma de uds. de los artículos con b
   Math.abs(sum(porBandeja, "uds") - sum(conBandeja, "udsCaja")) < 1e-6,
   fmtNum(sum(porBandeja, "uds")) + " uds en " + porBandeja.length + " bandejas");
 check("los artículos sin bandeja en el listado se quedan fuera",
-  conBandeja.length < productRows.length && porBandeja.every(b => b.articulos.every(a => ARTICULO_BANDEJA[a.producto] === b.cod)),
+  conBandeja.length < productRows.length && porBandeja.every(b => b.articulos.every(a => sandbox.bandejaDeArticulo(a.producto) === b.cod)),
   (productRows.length - conBandeja.length) + " filas sin bandeja");
 check("los artículos que comparten bandeja se suman en una sola fila",
   porBandeja.some(b => b.nArticulos > 1),
@@ -853,6 +853,27 @@ check("cada artículo sale bajo una sola bandeja",
   (() => { const vistos = porBandeja.flatMap(b => b.articulos.map(a => a.producto)); return vistos.length === new Set(vistos).size; })());
 check("el desglose va de más a menos consumo",
   porBandeja.every(b => b.articulos.every((a, i) => i === 0 || b.articulos[i - 1].uds >= a.uds)));
+
+// Código antiguo y NUEVO de la misma bandeja (hoja de material a planta)
+const EQUIV = ctx("BANDEJA_EQUIVALENTE"), POR_BOX = ctx("BANDEJAS_POR_BOX");
+check("ninguna fila queda con un código antiguo: se cuenta bajo el nuevo",
+  porBandeja.every(b => !(b.cod in EQUIV)));
+const fusionadas = Object.entries(EQUIV).filter(([viejo, nuevo]) =>
+  conBandeja.some(r => ARTICULO_BANDEJA[r.producto] === viejo) && conBandeja.some(r => ARTICULO_BANDEJA[r.producto] === nuevo));
+check("los dos códigos suman en una sola fila, con los artículos de ambos",
+  fusionadas.length > 0 && fusionadas.every(([viejo, nuevo]) => {
+    const fila = porBandeja.find(b => b.cod === nuevo);
+    const deAmbos = conBandeja.filter(r => ARTICULO_BANDEJA[r.producto] === viejo || ARTICULO_BANDEJA[r.producto] === nuevo);
+    return fila && fila.antiguo === viejo && Math.abs(fila.uds - sum(deAmbos, "udsCaja")) < 1e-6
+      && fila.nArticulos === new Set(deAmbos.map(r => r.producto)).size;
+  }),
+  fusionadas.map(([v, n]) => v + "+" + n).join(", "));
+check("box = uds ÷ bandejas por box, y sin tamaño de box queda vacío",
+  porBandeja.every(b => POR_BOX[b.cod] ? Math.abs(b.box - b.uds / POR_BOX[b.cod]) < 1e-9 : b.box === null)
+    && porBandeja.some(b => b.box !== null) && porBandeja.some(b => b.box === null),
+  porBandeja.filter(b => b.box !== null).length + " de " + porBandeja.length + " bandejas con box");
+check("los box de los artículos suman los de su bandeja",
+  porBandeja.filter(b => b.box !== null).every(b => Math.abs(sum(b.articulos, "box") - b.box) < 1e-9));
 
 const tablaB = documentStub.getElementById("tableBandeja");
 const mayor = porBandeja.slice().sort((a, b) => b.nArticulos - a.nArticulos)[0];
@@ -865,6 +886,8 @@ sandbox.renderTableBandeja(porBandeja);
 check("desplegada, enseña una fila por cada artículo de esa bandeja",
   filasArt() === mayor.nArticulos && mayor.articulos.every(a => tablaB.innerHTML.includes(">" + a.producto + "<")),
   "bandeja " + mayor.cod + ": " + filasArt() + " artículos");
+check("la tabla enseña la columna Box y los dos códigos de cada bandeja fusionada",
+  tablaB.innerHTML.includes(">Box ") && fusionadas.every(([viejo]) => tablaB.innerHTML.includes("/ " + viejo)));
 state.ui.bandejasAbiertas = new Set();
 
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);

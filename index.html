@@ -452,6 +452,7 @@
   /* Pestaña Bandejas: cada bandeja se despliega en los artículos que la gastan */
   .bandeja-caret { display: inline-block; width: 12px; margin-right: 4px; font-size: 9px; color: var(--text-muted); transition: transform .12s ease; }
   tr.bandeja-abierta .bandeja-caret { transform: rotate(90deg); }
+  .bandeja-alias { font-size: 11px; color: var(--text-muted); }
   tbody tr.bandeja-art td { font-size: 11.5px; color: var(--text-secondary); background: color-mix(in srgb, var(--text-primary) 2.5%, transparent); }
   tbody tr.bandeja-art td:first-child { padding-left: 42px; }
   .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
@@ -1262,6 +1263,59 @@ const ARTICULO_BANDEJA = {
   "58184": "1111345", "58185": "85094", "58187": "85094", "58193": "85094",
   "58194": "85094", "58198": "1051761", "58500": "1111345", "59111": "1109829"
 };
+
+// Hoja «Material que se baja a planta» (secciones LIDL, BP y MCD), pasada a
+// mano desde una foto. Donde la hoja da dos referencias, la de siempre y la
+// NUEVA, son la misma bandeja con dos códigos: se cuentan como una sola, bajo
+// el código nuevo.
+const BANDEJA_EQUIVALENTE = {   // código antiguo -> código nuevo
+  "1107611": "1110797",  // PICADA NUEVA 500 (BIPACK NUEVA)
+  "1109767": "1110798",  // 1 KG (BIPACK NUEVA)
+  "1084238": "1091733",  // NOVA HAMB DE 6
+  "1084239": "1091731",  // NOVA HAMB DE 2 (el antiguo no sale en el listado de artículos)
+  "1110839": "1113469"   // HAMBURGUESA 6
+};
+const BANDEJA_ANTIGUA = Object.fromEntries(Object.entries(BANDEJA_EQUIVALENTE).map(([antiguo, nuevo]) => [nuevo, antiguo]));
+
+// Bandejas que trae cada box del proveedor (columna CANTIDAD de esa hoja), por
+// código ya pasado a su código nuevo. ALB-24 pone «2304 / 2500» según venga de
+// IND-PACK o de FORMAS; se usa 2500, que es el que cuadra con sus 100 bandejas
+// por xurro.
+const BANDEJAS_POR_BOX = {
+  "1110797": 2560,  // PICADA NUEVA 500 (BIPACK NUEVA)
+  "1094301": 2500,  // ALB-24 NUEVA (IND-PACK & FORMAS)
+  "1110798": 2560,  // 1 KG (BIPACK NUEVA)
+  "1098379": 2875,  // PANCETA ELITE
+  "1098381": 2875,  // CHULETA Y LOMO ELITE
+  "85083": 5890,    // NATRUS
+  "85094": 2688,    // HAMBURGUESA XXL
+  "88707": 3500,    // MAGRO
+  "88913": 3360,    // PICADA
+  "1091733": 3840,  // NOVA HAMB DE 6
+  "1091731": 3840,  // NOVA HAMB DE 2
+  "1037489": 3696,  // HAMBURGUESA 4
+  "1113469": 5180,  // HAMBURGUESA 6
+  "1110564": 3696,  // REDONDA PEQUEÑA
+  "1110563": 3630,  // REDONDA GRANDE
+  "1098382": 2875,  // CHULETA XXL ELITE
+  "1055801": 4810,  // ESTOFADO
+  "1111345": 3696,  // LOMO 400
+  "1091771": 3696,  // LOMO NUEVA
+  "1088620": 3500,  // LOMO MCD
+  "1098153": 3136,  // SALSITXA
+  "1087263": 4956,  // SALCHICHA CERDO BP
+  "1087266": 4788,  // PICADA 400 BP
+  "1084500": 3510,  // HAMBUR-4 BP
+  "1103119": 3000,  // BANDEJA 18X25X2 CM C/ABS (MCD)
+  "1111344": 3696   // BANDEJA 15X23X2 CM C/ABS (MCD)
+};
+
+// Código con el que se cuenta la bandeja de un artículo: el del listado, o su
+// código nuevo si es una de las equivalencias de arriba.
+function bandejaDeArticulo(producto) {
+  const cod = ARTICULO_BANDEJA[producto];
+  return cod && (BANDEJA_EQUIVALENTE[cod] || cod);
+}
 
 // Solo 2 turnos reales: Mañana (corta fijo a las 14h) y Tarde (arranca fijo a las 14h)
 function parseEsDateTime(v) {
@@ -2801,12 +2855,14 @@ function aggregateByArticulo(rows) {
 // por artículo: varios artículos comparten el mismo molde/envase, así que
 // aquí es donde se suman de verdad. Los artículos sin bandeja conocida en
 // ARTICULO_BANDEJA se excluyen: no se sabe qué envase gastaron, así que no se
-// les puede atribuir a ninguno. `articulos` es el desglose que se ve al
-// desplegar la bandeja: qué artículos la gastan y cuánto, de más a menos.
+// les puede atribuir a ninguno. Los dos códigos de una misma bandeja
+// (BANDEJA_EQUIVALENTE) caen en la misma fila. `articulos` es el desglose que
+// se ve al desplegarla, de más a menos. `box` = uds ÷ bandejas por box del
+// proveedor, o null si la hoja de planta no trae esa bandeja.
 function aggregateByBandeja(rows) {
   const map = new Map();
   for (const r of rows) {
-    const cod = ARTICULO_BANDEJA[r.producto];
+    const cod = bandejaDeArticulo(r.producto);
     if (!cod) continue;
     if (!map.has(cod)) map.set(cod, { cod, desc: BANDEJA_TIPOS[cod] || cod, uds: 0, articulos: new Map() });
     const g = map.get(cod);
@@ -2814,11 +2870,17 @@ function aggregateByBandeja(rows) {
     if (!g.articulos.has(r.producto)) g.articulos.set(r.producto, { producto: r.producto, desc: r.desc, uds: 0 });
     g.articulos.get(r.producto).uds += r.udsCaja || 0;
   }
-  return [...map.values()].map(g => ({
-    cod: g.cod, desc: g.desc, uds: g.uds,
-    nArticulos: g.articulos.size,
-    articulos: [...g.articulos.values()].sort((a, b) => b.uds - a.uds)
-  }));
+  return [...map.values()].map(g => {
+    const porBox = BANDEJAS_POR_BOX[g.cod] || null;
+    return {
+      cod: g.cod, antiguo: BANDEJA_ANTIGUA[g.cod] || null, desc: g.desc, uds: g.uds,
+      porBox, box: porBox ? g.uds / porBox : null,
+      nArticulos: g.articulos.size,
+      articulos: [...g.articulos.values()]
+        .map(a => ({ ...a, box: porBox ? a.uds / porBox : null }))
+        .sort((a, b) => b.uds - a.uds)
+    };
+  });
 }
 
 /* ============================================================
@@ -3467,15 +3529,21 @@ function renderTableArticulo(data) {
    BANDEJAS: consumo diario por tipo de bandeja (envase)
    ============================================================ */
 
+// Box con un decimal; un consumo real pero menor de 0,05 box no se enseña
+// como «0,0», que se leería como que no se ha gastado nada.
+const fmtBox = n => n === null ? "—" : n > 0 && n < 0.05 ? "<0,1"
+  : n.toLocaleString("es-ES", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
 function renderTableBandeja(data) {
   const el = document.getElementById("tableBandeja");
-  setCount("countBandeja", data.length ? `${fmtInt(data.length)} tipos de bandeja` : "");
+  const conBox = data.filter(d => d.box !== null).length;
+  setCount("countBandeja", data.length ? `${fmtInt(data.length)} tipos · ${fmtInt(conBox)} con box conocido` : "");
   if (!data.length) { el.innerHTML = `<div class="empty-note">Ningún artículo de la selección tiene bandeja asignada en el listado.</div>`; return; }
 
   const { col, dir } = state.sortBandeja;
-  const key = { uds: d => d.uds, articulos: d => d.nArticulos }[col];
+  const key = { uds: d => d.uds, box: d => d.box ?? -1, articulos: d => d.nArticulos }[col];
   const sorted = data.slice().sort((a, b) => (key(a) - key(b)) * (dir === "asc" ? 1 : -1));
-  const totalUds = sum(data, d => d.uds), totalArt = sum(data, d => d.nArticulos);
+  const totalUds = sum(data, d => d.uds), totalArt = sum(data, d => d.nArticulos), totalBox = sum(data, d => d.box);
 
   // El % de cada artículo es sobre lo que gasta SU bandeja, no sobre el total:
   // al desplegarla la pregunta es qué artículo se lleva la mayor parte.
@@ -3485,6 +3553,7 @@ function renderTableBandeja(data) {
       <td>${escapeHtml(truncate(a.desc, 46))}</td>
       <td></td>
       <td>${fmtInt(a.uds)}</td>
+      <td>${fmtBox(a.box)}</td>
       <td title="Parte del consumo de esta bandeja">${d.uds > 0 ? fmtPct(a.uds / d.uds * 100) : "—"}</td>
     </tr>`).join("");
 
@@ -3493,10 +3562,11 @@ function renderTableBandeja(data) {
     return `
     <tr class="row-clickable${abierta ? " bandeja-abierta" : ""}" data-cod="${escapeHtml(d.cod)}" aria-expanded="${abierta}"
         title="${abierta ? "Plegar" : "Desplegar: qué artículos la gastan y su evolución diaria"}">
-      <td><span class="bandeja-caret">▶</span>${escapeHtml(d.cod)}</td>
+      <td><span class="bandeja-caret">▶</span>${escapeHtml(d.cod)}${d.antiguo ? ` <span class="bandeja-alias" title="Código antiguo de la misma bandeja: se cuentan juntos">/ ${escapeHtml(d.antiguo)}</span>` : ""}</td>
       <td>${escapeHtml(truncate(d.desc, 46))}</td>
       <td>${fmtInt(d.nArticulos)}</td>
       <td>${fmtInt(d.uds)}</td>
+      <td${d.porBox ? ` title="${fmtInt(d.porBox)} bandejas por box"` : ""}>${fmtBox(d.box)}</td>
       <td>${totalUds > 0 ? fmtPct(d.uds / totalUds * 100) : "—"}</td>
     </tr>${abierta ? filasArticulos(d) : ""}`;
   }).join("");
@@ -3508,10 +3578,11 @@ function renderTableBandeja(data) {
       <th>Bandeja</th><th>Descripción</th>
       <th data-col="articulos">Artículos ${dirIndicator("articulos")}</th>
       <th data-col="uds">Uds. ${dirIndicator("uds")}</th>
+      <th data-col="box" title="Uds. ÷ bandejas que trae cada box del proveedor">Box ${dirIndicator("box")}</th>
       <th>% del total</th>
     </tr></thead>
     <tbody>${rows}
-      <tr class="total-row"><td colspan="2">TOTAL</td><td>${fmtInt(totalArt)}</td><td>${fmtInt(totalUds)}</td><td>100 %</td></tr>
+      <tr class="total-row"><td colspan="2">TOTAL</td><td>${fmtInt(totalArt)}</td><td>${fmtInt(totalUds)}</td><td title="Solo las bandejas con box conocido">${fmtBox(conBox ? totalBox : null)}</td><td>100 %</td></tr>
     </tbody></table>`;
 
   el.querySelectorAll("th[data-col]").forEach(th => {
@@ -3541,7 +3612,7 @@ function renderTableBandeja(data) {
 }
 
 function renderBandejas(rows) {
-  const mapeadas = rows.filter(r => ARTICULO_BANDEJA[r.producto]);
+  const mapeadas = rows.filter(r => bandejaDeArticulo(r.producto));
   const articulosTotal = new Set(rows.map(r => r.producto)).size;
   const articulosCubiertos = new Set(mapeadas.map(r => r.producto)).size;
   setCount("bandejasCobertura", articulosTotal
@@ -3561,10 +3632,10 @@ function renderBandejas(rows) {
   const serie = bandejaTimeline(rows, elegida ? elegida.cod : null);
   const totalUds = sum(mapeadas, r => r.udsCaja);
   const titulo = elegida
-    ? `Bandeja ${escapeHtml(elegida.cod)} · ${escapeHtml(truncate(elegida.desc, 40))} <button class="ghost crumb" id="btnBandejaClear" title="Volver a todas las bandejas">↩ Ver total</button>`
+    ? `Bandeja ${escapeHtml(elegida.cod)}${elegida.antiguo ? " / " + escapeHtml(elegida.antiguo) : ""} · ${escapeHtml(truncate(elegida.desc, 40))} <button class="ghost crumb" id="btnBandejaClear" title="Volver a todas las bandejas">↩ Ver total</button>`
     : "Consumo diario de bandejas";
   const sub = elegida
-    ? `${fmtInt(elegida.uds)} unidades en ${fmtInt(elegida.nArticulos)} artículo${elegida.nArticulos === 1 ? "" : "s"} — clic de nuevo en la bandeja para plegarla y volver al total`
+    ? `${fmtInt(elegida.uds)} unidades${elegida.box !== null ? ` (${fmtBox(elegida.box)} box)` : ""} en ${fmtInt(elegida.nArticulos)} artículo${elegida.nArticulos === 1 ? "" : "s"} — clic de nuevo en la bandeja para plegarla y volver al total`
     : `${fmtInt(totalUds)} unidades en total — suma de todos los tipos, por día`;
 
   renderLineChart("chartBandejaTendencia", titulo, sub,
@@ -3574,7 +3645,8 @@ function renderBandejas(rows) {
     }],
     {
       formatX: x => fmtDayShort(new Date(x)), formatY: fmtInt,
-      tooltip: (p, s) => `<strong>${escapeHtml(p.etiqueta)}</strong><br>${escapeHtml(s.label)}: ${fmtInt(p.y)} uds`
+      tooltip: (p, s) => `<strong>${escapeHtml(p.etiqueta)}</strong><br>${escapeHtml(s.label)}: ${fmtInt(p.y)} uds` +
+        (elegida && elegida.porBox ? ` · ${fmtBox(p.y / elegida.porBox)} box` : "")
     });
 
   const btnClear = document.getElementById("btnBandejaClear");
@@ -3648,7 +3720,7 @@ function paroTimeline(rows, porSemana) {
 // llega a necesitar agrupar más para seguir leyéndose.
 function bandejaTimeline(rows, cod) {
   const mapeadas = rows.filter(r => {
-    const c = ARTICULO_BANDEJA[r.producto];
+    const c = bandejaDeArticulo(r.producto);
     return c && (!cod || c === cod);
   });
   return agruparPorPeriodo(mapeadas, false).map(g => ({

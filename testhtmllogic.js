@@ -834,5 +834,38 @@ state.ui.tendenciaDesglose = "linea";
 state.ui.tendenciaGrano = "auto";
 state.ui.tendencia = "prod.merma";
 
+console.log("\n=== Bandejas ===");
+const ARTICULO_BANDEJA = ctx("ARTICULO_BANDEJA");
+const porBandeja = sandbox.aggregateByBandeja(productRows);
+const conBandeja = productRows.filter(r => ARTICULO_BANDEJA[r.producto]);
+check("el total de todas las bandejas es la suma de uds. de los artículos con bandeja",
+  Math.abs(sum(porBandeja, "uds") - sum(conBandeja, "udsCaja")) < 1e-6,
+  fmtNum(sum(porBandeja, "uds")) + " uds en " + porBandeja.length + " bandejas");
+check("los artículos sin bandeja en el listado se quedan fuera",
+  conBandeja.length < productRows.length && porBandeja.every(b => b.articulos.every(a => ARTICULO_BANDEJA[a.producto] === b.cod)),
+  (productRows.length - conBandeja.length) + " filas sin bandeja");
+check("los artículos que comparten bandeja se suman en una sola fila",
+  porBandeja.some(b => b.nArticulos > 1),
+  "hasta " + Math.max(...porBandeja.map(b => b.nArticulos)) + " artículos en una bandeja");
+check("al desplegar, los artículos de cada bandeja suman lo mismo que su fila",
+  porBandeja.every(b => Math.abs(sum(b.articulos, "uds") - b.uds) < 1e-6 && b.articulos.length === b.nArticulos));
+check("cada artículo sale bajo una sola bandeja",
+  (() => { const vistos = porBandeja.flatMap(b => b.articulos.map(a => a.producto)); return vistos.length === new Set(vistos).size; })());
+check("el desglose va de más a menos consumo",
+  porBandeja.every(b => b.articulos.every((a, i) => i === 0 || b.articulos[i - 1].uds >= a.uds)));
+
+const tablaB = documentStub.getElementById("tableBandeja");
+const mayor = porBandeja.slice().sort((a, b) => b.nArticulos - a.nArticulos)[0];
+const filasArt = () => (tablaB.innerHTML.match(/class="bandeja-art"/g) || []).length;
+state.ui.bandejasAbiertas = new Set();
+sandbox.renderTableBandeja(porBandeja);
+check("plegada, la tabla no enseña artículos", filasArt() === 0);
+state.ui.bandejasAbiertas = new Set([mayor.cod]);
+sandbox.renderTableBandeja(porBandeja);
+check("desplegada, enseña una fila por cada artículo de esa bandeja",
+  filasArt() === mayor.nArticulos && mayor.articulos.every(a => tablaB.innerHTML.includes(">" + a.producto + "<")),
+  "bandeja " + mayor.cod + ": " + filasArt() + " artículos");
+state.ui.bandejasAbiertas = new Set();
+
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);
 process.exit(fallos === 0 ? 0 : 1);

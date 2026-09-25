@@ -449,6 +449,11 @@
   tbody tr:hover { background: color-mix(in srgb, var(--s1) 5%, transparent); }
   tbody tr.row-clickable { cursor: pointer; }
   tbody tr.total-row { font-weight: 600; background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+  /* Pestaña Bandejas: cada bandeja se despliega en los artículos que la gastan */
+  .bandeja-caret { display: inline-block; width: 12px; margin-right: 4px; font-size: 9px; color: var(--text-muted); transition: transform .12s ease; }
+  tr.bandeja-abierta .bandeja-caret { transform: rotate(90deg); }
+  tbody tr.bandeja-art td { font-size: 11.5px; color: var(--text-secondary); background: color-mix(in srgb, var(--text-primary) 2.5%, transparent); }
+  tbody tr.bandeja-art td:first-child { padding-left: 42px; }
   .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
   .pill.good { color: var(--good-text); background: color-mix(in srgb, var(--good) 14%, transparent); }
   .pill.bad { color: var(--critical); background: color-mix(in srgb, var(--critical) 14%, transparent); }
@@ -822,7 +827,7 @@
         <div class="panel" style="flex:1;min-height:0;">
           <header>
             <h3>Totales por tipo de bandeja</h3>
-            <span class="sub">Suma de unidades de los artículos que comparten cada bandeja · clic en una fila para ver su evolución diaria</span>
+            <span class="sub">Suma de unidades de los artículos que comparten cada bandeja · clic en una bandeja para desplegar sus artículos y ver su evolución diaria</span>
             <span class="right row-count" id="countBandeja"></span>
           </header>
           <div class="body flush"><div id="tableBandeja"></div></div>
@@ -1533,7 +1538,9 @@ const state = {
     tendenciaGrano: "auto",
     tendenciaDesglose: "linea",
     // Bandeja elegida en la tabla de la pestaña Bandejas (null = total de todas)
-    bandejaSel: null
+    bandejaSel: null,
+    // Bandejas desplegadas en esa tabla (puede haber varias a la vez)
+    bandejasAbiertas: new Set()
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -2794,22 +2801,23 @@ function aggregateByArticulo(rows) {
 // por artículo: varios artículos comparten el mismo molde/envase, así que
 // aquí es donde se suman de verdad. Los artículos sin bandeja conocida en
 // ARTICULO_BANDEJA se excluyen: no se sabe qué envase gastaron, así que no se
-// les puede atribuir a ninguno.
+// les puede atribuir a ninguno. `articulos` es el desglose que se ve al
+// desplegar la bandeja: qué artículos la gastan y cuánto, de más a menos.
 function aggregateByBandeja(rows) {
   const map = new Map();
   for (const r of rows) {
     const cod = ARTICULO_BANDEJA[r.producto];
     if (!cod) continue;
-    if (!map.has(cod)) map.set(cod, { cod, desc: BANDEJA_TIPOS[cod] || cod, rows: [], articulos: new Set() });
+    if (!map.has(cod)) map.set(cod, { cod, desc: BANDEJA_TIPOS[cod] || cod, uds: 0, articulos: new Map() });
     const g = map.get(cod);
-    g.rows.push(r);
-    g.articulos.add(r.producto);
+    g.uds += r.udsCaja || 0;
+    if (!g.articulos.has(r.producto)) g.articulos.set(r.producto, { producto: r.producto, desc: r.desc, uds: 0 });
+    g.articulos.get(r.producto).uds += r.udsCaja || 0;
   }
   return [...map.values()].map(g => ({
-    cod: g.cod, desc: g.desc,
-    uds: sum(g.rows, r => r.udsCaja),
-    kg: sum(g.rows, r => r.kg),
-    nArticulos: g.articulos.size
+    cod: g.cod, desc: g.desc, uds: g.uds,
+    nArticulos: g.articulos.size,
+    articulos: [...g.articulos.values()].sort((a, b) => b.uds - a.uds)
   }));
 }
 
@@ -3465,18 +3473,33 @@ function renderTableBandeja(data) {
   if (!data.length) { el.innerHTML = `<div class="empty-note">Ningún artículo de la selección tiene bandeja asignada en el listado.</div>`; return; }
 
   const { col, dir } = state.sortBandeja;
-  const key = { uds: d => d.uds, kg: d => d.kg, articulos: d => d.nArticulos }[col];
+  const key = { uds: d => d.uds, articulos: d => d.nArticulos }[col];
   const sorted = data.slice().sort((a, b) => (key(a) - key(b)) * (dir === "asc" ? 1 : -1));
   const totalUds = sum(data, d => d.uds), totalArt = sum(data, d => d.nArticulos);
 
-  const rows = sorted.map(d => `
-    <tr class="row-clickable" data-cod="${escapeHtml(d.cod)}" title="Ver evolución diaria de esta bandeja">
-      <td>${escapeHtml(d.cod)}</td>
+  // El % de cada artículo es sobre lo que gasta SU bandeja, no sobre el total:
+  // al desplegarla la pregunta es qué artículo se lleva la mayor parte.
+  const filasArticulos = d => d.articulos.map(a => `
+    <tr class="bandeja-art">
+      <td>${escapeHtml(a.producto)}</td>
+      <td>${escapeHtml(truncate(a.desc, 46))}</td>
+      <td></td>
+      <td>${fmtInt(a.uds)}</td>
+      <td title="Parte del consumo de esta bandeja">${d.uds > 0 ? fmtPct(a.uds / d.uds * 100) : "—"}</td>
+    </tr>`).join("");
+
+  const rows = sorted.map(d => {
+    const abierta = state.ui.bandejasAbiertas.has(d.cod);
+    return `
+    <tr class="row-clickable${abierta ? " bandeja-abierta" : ""}" data-cod="${escapeHtml(d.cod)}" aria-expanded="${abierta}"
+        title="${abierta ? "Plegar" : "Desplegar: qué artículos la gastan y su evolución diaria"}">
+      <td><span class="bandeja-caret">▶</span>${escapeHtml(d.cod)}</td>
       <td>${escapeHtml(truncate(d.desc, 46))}</td>
       <td>${fmtInt(d.nArticulos)}</td>
       <td>${fmtInt(d.uds)}</td>
       <td>${totalUds > 0 ? fmtPct(d.uds / totalUds * 100) : "—"}</td>
-    </tr>`).join("");
+    </tr>${abierta ? filasArticulos(d) : ""}`;
+  }).join("");
 
   const dirIndicator = c => state.sortBandeja.col === c ? (state.sortBandeja.dir === "asc" ? "▲" : "▼") : "";
 
@@ -3501,9 +3524,18 @@ function renderTableBandeja(data) {
   });
   el.querySelectorAll("tr[data-cod]").forEach(tr => {
     tr.addEventListener("click", () => {
-      // Clic de nuevo sobre la misma fila quita el filtro y vuelve al total.
-      state.ui.bandejaSel = state.ui.bandejaSel === tr.dataset.cod ? null : tr.dataset.cod;
-      renderAll(true);
+      // Desplegar una bandeja también la lleva al gráfico; plegarla devuelve el
+      // gráfico al total si era la que se estaba viendo. Solo se repinta esta
+      // pestaña: abrir y cerrar filas tiene que ir rápido.
+      const cod = tr.dataset.cod, abiertas = state.ui.bandejasAbiertas;
+      if (abiertas.has(cod)) {
+        abiertas.delete(cod);
+        if (state.ui.bandejaSel === cod) state.ui.bandejaSel = null;
+      } else {
+        abiertas.add(cod);
+        state.ui.bandejaSel = cod;
+      }
+      renderBandejas(getFilteredRows());
     });
   });
 }
@@ -3532,7 +3564,7 @@ function renderBandejas(rows) {
     ? `Bandeja ${escapeHtml(elegida.cod)} · ${escapeHtml(truncate(elegida.desc, 40))} <button class="ghost crumb" id="btnBandejaClear" title="Volver a todas las bandejas">↩ Ver total</button>`
     : "Consumo diario de bandejas";
   const sub = elegida
-    ? `${fmtInt(elegida.uds)} unidades en la selección — clic en la fila de nuevo para quitar el filtro`
+    ? `${fmtInt(elegida.uds)} unidades en ${fmtInt(elegida.nArticulos)} artículo${elegida.nArticulos === 1 ? "" : "s"} — clic de nuevo en la bandeja para plegarla y volver al total`
     : `${fmtInt(totalUds)} unidades en total — suma de todos los tipos, por día`;
 
   renderLineChart("chartBandejaTendencia", titulo, sub,
@@ -3546,7 +3578,7 @@ function renderBandejas(rows) {
     });
 
   const btnClear = document.getElementById("btnBandejaClear");
-  if (btnClear) btnClear.addEventListener("click", e => { e.stopPropagation(); state.ui.bandejaSel = null; renderAll(true); });
+  if (btnClear) btnClear.addEventListener("click", e => { e.stopPropagation(); state.ui.bandejaSel = null; renderBandejas(getFilteredRows()); });
 }
 
 /* ---------- Histórico de merma del artículo buscado ----------

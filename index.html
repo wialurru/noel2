@@ -588,6 +588,7 @@
     <button data-tab="paros">Paros y turnos</button>
     <button data-tab="historico">Histórico</button>
     <button data-tab="detalle">Detalle</button>
+    <button data-tab="bandejas">Bandejas</button>
   </nav>
 
   <!-- Pantalla de bienvenida: solo mientras no hay datos cargados -->
@@ -812,6 +813,24 @@
       </div>
     </section>
 
+    <!-- ============ BANDEJAS: consumo diario por tipo de bandeja/envase ============ -->
+    <section class="view" data-view="bandejas">
+      <div class="row-controls">
+        <span class="sub" id="bandejasCobertura"></span>
+      </div>
+      <div class="grid-side">
+        <div class="panel" style="flex:1;min-height:0;">
+          <header>
+            <h3>Totales por tipo de bandeja</h3>
+            <span class="sub">Suma de unidades de los artículos que comparten cada bandeja · clic en una fila para ver su evolución diaria</span>
+            <span class="right row-count" id="countBandeja"></span>
+          </header>
+          <div class="body flush"><div id="tableBandeja"></div></div>
+        </div>
+        <div class="card chart-card" id="chartBandejaTendencia"></div>
+      </div>
+    </section>
+
   </main>
 
   <div id="printReport" class="print-report overlay-view" hidden>
@@ -1028,6 +1047,215 @@ const PARO_COLS = {
   de: "De", a: "A", lote: "Lote",
   tiempoTotal: "TIEMPO TOTAL", tDisponibilidad: "DISPONIBILIDAD",
   tProgramado: "PARO PROGRAMADO", tNoAfectaOee: "NO AFECTA OEE"
+};
+
+// Bandejas/envases: mapeo estático extraído de una vez de
+// "testdata/listado de bandejas por articulo.xlsx". No es un export de Mapex
+// que se re-suba mes a mes como los tres de arriba, así que en vez de pedir
+// que se cargue como CSV se embebe aquí, igual que PR_COLS/CT_COLS/PARO_COLS.
+// BANDEJA_TIPOS: código de bandeja -> descripción. El Excel repetía el mismo
+// código con pequeñas variantes de texto (mayúsculas, espacios); se dejó la
+// variante más frecuente de cada código.
+const BANDEJA_TIPOS = {
+  "81825": "BANDEJAS 85BLANCA (213x156x20)",
+  "82757": "BANDEJAS T-200 (300x235x20)",
+  "82882": "BANDEJA 181x251H50 S/ABSTRANSPARENTE 12548 F1 1825",
+  "83726": "BANDEJA 251X181H50 PET/PE C/AB  ABOSRBENTE MP 2500 170X75",
+  "83803": "BANDEJA 251X181H60 PET/PE C/AB ABSORBENTE MP 4000 80X120",
+  "84331": "BANDEJA 199X155H40 APET/PE12U ALBONDIGAS",
+  "85083": "BANDEJA  HAM. 2 UNIDAD NATRUS",
+  "85094": "BANDEJA 254.183.70 APET/PE S/A  TRANSPARENTE",
+  "85780": "BANDEJA 199x155h29 APET/PETRANSPARENTE",
+  "88464": "GAR 265x320x80 TRANSPARENTE",
+  "88707": "BANDEJA 181x251H32 C/ABS LP 2500 175X75 - F518253200",
+  "88913": "BANDEJA 199X155H47 APET/PETRANSPARENTE",
+  "1000668": "BANDEJA 15X20H55 C/ABS 120 ML ABSORCIÓN-ESCALOPINES",
+  "1037489": "BANDEJA 150X230X36 BICAVIDADTRANSPARENTE 4XHAMBURG",
+  "1037490": "BANDEJA 150X230X25 BICAVIDADTRANSPARENTE HAMBURGUE",
+  "1045562": "BANDEJA 150X230H45 2 CAVIDADESTRANSPARENTE - 6 HAM",
+  "1049198": "LEAFSKIN HAMB. B.ANGUS LIDL 167X230 180G + PP BRILLANT",
+  "1051660": "BANDEJA PET/PE REDONDA 204x43",
+  "1051761": "BANDEJA PET/PE 15X23H37 8 CAV.",
+  "1052489": "BANDEJA PET 18X25X3,5 A/ABS  MECANIC TRANSPARENT",
+  "1053980": "LEAFSKIN HAMB. B.ANGUS NOEL 167X230 150G",
+  "1054230": "BANDEJA 18x25x3,5 PET/PE C/ABS ROSA LP08 TRANSP. 420 MICRAS",
+  "1054437": "BANDEJA REDONDA 204X30 PET/PE",
+  "1055210": "BANDEJA 180.180.70 PET/PE S/ ABS TRANSPARENTE 680 MICRAS",
+  "1055801": "BANDEJA 150X230H53 C/ABS MP 4000 10X18",
+  "1056244": "BANDEJA 150x230H60 TRANSPARENT S/ABS",
+  "1056259": "BANDEJA 150x230H36 C/ABS MP 4000 10X15",
+  "1060967": "BANDEJA 18x25x4 PET/PE C/ABS ROSA LP08 TRANSP. 510 MICRAS",
+  "1063457": "SAFATA CARTRO KRAFT BON PREU 15*23*37",
+  "1063458": "SAFATA CARTRO KRAFT BON PREU 15*23*47",
+  "1063459": "SAFATA CARTRO 18*25*50",
+  "1063723": "BANDEJA BARBACOA 3 CAVIDADES",
+  "1065323": "FILM TRANSPARENTE PA/PE 515 MM170 MICRAS",
+  "1070696": "BANDEJA 160X240X27 SKIN PP/EVO H/PE PEEL TRANSPARENT",
+  "1084233": "BANDEJA PET180X25X60 ABS LP10 125x100 MONOPET",
+  "1084237": "BANDEJA PET 180X250X43 ABS LP10 125x100 MONOPET",
+  "1084238": "BANDEJA BIPACK 15X23X45CM",
+  "1084435": "FILM TAPA VACIO 80MICRAS 515mm",
+  "1084500": "BANDEJA PET ELITE 15X23X35",
+  "1087263": "SAFATA 1520-25 PET ELITE",
+  "1087266": "SAFATA 1520-45 PET ELITE",
+  "1088498": "SAFATA 180X250X35 + ABS ROSA LP3 ROSA (125X75MM) MERCADONA",
+  "1088500": "SAFATA 180X250X55 + ABS ROSA LP14 ROSA (180X110MM)MERCADONA",
+  "1088620": "SAFATA 180X250X30 ABS ROSA",
+  "1088627": "SAFATA 180X250X47 + ABS ROSA",
+  "1089783": "SAFATA 180X250X40 + LP10.000 ROSA (125x70mm)",
+  "1091528": "FLATSKIN  BLACK ANGUS BONPREU",
+  "1091731": "BANDEJA 15X25X3 CM TROQUELADA",
+  "1091733": "BANDEJA 15X25X4,5CM TROQUELADA",
+  "1091771": "BANDEJA 150X230X60 ABS LP12",
+  "1094261": "LEAFSKIN HAMB B.ANGUS-IBERIC",
+  "1094301": "SAFATA MANDONGUILLES X24 UNIT 460MICRAS",
+  "1096105": "LEAFSKIN HAMB. B.ANGUS LIDL 167X230 180G + PP BRILLANT",
+  "1096535": "SAFATA 15X23X4,5CM S/ABS",
+  "1098083": "LEAFSKIN HAMBURG CERDO I.Y BL",
+  "1098153": "BANDEJA BICAVIDAD 27X14 LIDL",
+  "1098379": "BANDEJA 18X25X5CM PET+COLA +ABS (17X7,5CM MP 2500)",
+  "1098381": "BANDEJA 18X25X6CM PET+COLA",
+  "1098382": "BANDEJA 18X25X7CM PET+COLA",
+  "1101171": "LEAFSKIN HAMB. VACUNO B.ANGUS",
+  "1101304": "FLATSKIN HAMB.CERDO IBERICO Y",
+  "1101330": "FLATSKIN HAMB. VACUNO B.ANGUS",
+  "1103109": "BANDEJA 15X23X2 CM C/ABS",
+  "1103119": "BANDEJA 18X25X2 CM C/ABS",
+  "1104553": "FILM KRAFT TAPA VACIO 80 MY",
+  "1105752": "FILM ANONIMO OPP/PP-EVOH-PP",
+  "1106995": "LEAFSKIN HAMB VACUNO B.ANGUS",
+  "1107611": "SAFATA 18X25X4CM PET+COLA",
+  "1108371": "LEAFSKIN HAMBURGUESA VACUNO BL",
+  "1108372": "LEAFSKIN HAMBURGUESA CERDO IBE",
+  "1108373": "FLAT SKIN PICADA 99% LIDL",
+  "1108453": "FLAT SKIN HAMB IBERIC LIDL",
+  "1109766": "LEAFTSKIN  VACÚ ANGUS",
+  "1109767": "SAFATA 18X25X5CM PET+COLA",
+  "1109829": "FILM TRANSPARENTE PA/PE 515 MM",
+  "1110171": "LEAFSKIN HAMB. ANGUS 150 g",
+  "1110176": "FLAT SKIN HAMB. BLACK ANGUS Y",
+  "1110563": "SAFATA RODONA PET+COLA 204X43M",
+  "1110564": "SAFATA RODONA PETITA 204X30MM",
+  "1110796": "SAFATA MINI ALBONDIGA 18X25X30",
+  "1110797": "BANDEJA BIPACK 18X25X35 MM",
+  "1110798": "BANDEJA BIPACK 180X280X65 mm",
+  "1110839": "BANDEJA 15X23H4,6 TRANSPARENTE",
+  "1111051": "LEAFSKIN HAMB. IBERIC I ANGUS",
+  "1111344": "SAFATA 15X23X2CM PET/PE ABS",
+  "1111345": "SAFATA 15X23X3,6 CM PET/PE ABS",
+  "1113469": "BANDEJA 15X23X7,5CM S/ ABS"
+};
+
+// ARTICULO_BANDEJA: código de artículo final -> código de bandeja que
+// consume (clave de BANDEJA_TIPOS). Un artículo del listado (52454) traía dos
+// bandejas distintas sin fecha que permitiera elegir entre ellas; se queda
+// con la primera fila del Excel. Los artículos que no aparecen aquí no
+// tienen bandeja conocida y quedan fuera del cruce (no se sabe qué envase
+// gastaron, así que no se les puede atribuir a ninguno).
+const ARTICULO_BANDEJA = {
+  "20851": "88913", "20872": "1056259", "20873": "83726", "20874": "83803",
+  "20875": "83803", "20890": "88913", "20891": "1051660", "20902": "1109829",
+  "20922": "1109829", "21093": "1037490", "21098": "84331", "21109": "82882",
+  "21110": "82882", "21111": "85094", "21150": "85094", "21184": "85094",
+  "21193": "1091733", "21194": "1084238", "21256": "85083", "21308": "1087266",
+  "21310": "1087263", "21326": "1000668", "21381": "1107611", "21502": "88913",
+  "21503": "88913", "21504": "1110563", "21579": "85094", "25313": "88913",
+  "27029": "1065323", "27080": "1065323", "27081": "1087266", "27082": "83726",
+  "27083": "1055801", "27094": "82882", "27095": "1110798", "27096": "82882",
+  "27101": "1051660", "27103": "1065323", "27104": "1065323", "27118": "88913",
+  "27179": "1091731", "27188": "1098381", "27263": "1110563", "27267": "1109767",
+  "27290": "1096105", "27291": "1110171", "27292": "1094261", "27295": "1098382",
+  "27296": "1098382", "27298": "1111051", "27301": "1091733", "27302": "1045562",
+  "27315": "1054230", "27316": "1060967", "27328": "1110564", "27329": "1055801",
+  "27335": "1111345", "27339": "1098379", "27362": "1094261", "27376": "1091771",
+  "27499": "1049198", "27500": "1049198", "27518": "85094", "27519": "1109767",
+  "27520": "1055210", "27522": "1055210", "27535": "88913", "27536": "1037490",
+  "27550": "1110176", "27582": "1101304", "27594": "88707", "27595": "1111345",
+  "27597": "1098379", "27616": "1101171", "27631": "88913", "27632": "88913",
+  "27633": "88913", "27634": "1051660", "27635": "1056259", "27636": "83803",
+  "27637": "83726", "27678": "1109829", "27683": "1094301", "27689": "1109829",
+  "27692": "1109829", "27694": "88913", "27695": "88913", "27696": "1037490",
+  "27697": "1037490", "27704": "1084435", "27706": "1110176", "27708": "1098379",
+  "27709": "1111345", "27710": "1055801", "27711": "1098379", "27717": "1055801",
+  "27718": "1055801", "27719": "1098381", "27728": "1109829", "27729": "1109829",
+  "27730": "1098381", "27731": "1098379", "27732": "1111345", "27738": "1091771",
+  "27739": "1110797", "27740": "1110797", "27741": "1107611", "27742": "1107611",
+  "27743": "1110797", "27744": "1091733", "27745": "1110798", "27746": "1091731",
+  "27747": "1091731", "27748": "1091733", "27749": "1091733", "27752": "1094301",
+  "27753": "1110563", "27754": "1110563", "27755": "1110798", "27756": "1110798",
+  "27757": "1091733", "27758": "1091733", "27759": "1108372", "27760": "1108371",
+  "27766": "1109829", "27772": "88913", "27773": "1109767", "27774": "88913",
+  "27786": "1109829", "27789": "1109829", "27791": "1109829", "27856": "88913",
+  "27964": "1109829", "27993": "1065323", "28057": "1096535", "28058": "1065323",
+  "28091": "1109829", "28101": "1098083", "28106": "1091771", "28110": "1101330",
+  "28111": "1091731", "28121": "1109829", "28122": "1109829", "28123": "1109829",
+  "28128": "1109829", "28129": "1109829", "28131": "1109829", "28144": "1091771",
+  "28146": "1091771", "28147": "1111345", "28148": "1111345", "28155": "1098153",
+  "28159": "1109829", "28165": "1110563", "28175": "1091731", "28176": "1091733",
+  "28179": "1109829", "28180": "1109829", "28181": "88707", "28184": "1065323",
+  "28189": "1109829", "28192": "1109829", "28193": "1109829", "28195": "1109829",
+  "28201": "1109829", "28202": "1108373", "28204": "1111344", "28205": "1103119",
+  "28206": "1110839", "28207": "1109829", "28209": "1109829", "28211": "1109829",
+  "28212": "1109829", "28213": "1110839", "28214": "1111345", "28216": "1109829",
+  "28232": "1109829", "28233": "1109829", "28247": "1111345", "28248": "1055801",
+  "28249": "1111345", "28255": "1108453", "28257": "1109829", "28258": "1109829",
+  "28263": "1109829", "28264": "1109829", "28272": "1113469", "28294": "1113469",
+  "28304": "1106995", "28306": "1109829", "28309": "1109829", "28310": "1109829",
+  "28311": "1109829", "28312": "1109829", "28313": "1103119", "28314": "1103109",
+  "28316": "1098379", "28317": "1098381", "28318": "1055801", "28319": "1098379",
+  "28320": "1111345", "28321": "1098381", "28322": "1091771", "28323": "1055801",
+  "28324": "1091771", "28326": "1091771", "28341": "1091771", "28345": "88707",
+  "28354": "1055801", "28355": "1098379", "28359": "88707", "28364": "1098379",
+  "28365": "1111345", "28366": "1107611", "28376": "1091731", "28379": "1088620",
+  "28389": "1098379", "28390": "88707", "28391": "1111345", "28412": "1113469",
+  "28413": "1111345", "28414": "1110839", "28416": "88707", "29010": "1051660",
+  "29021": "1088500", "29022": "1088498", "29026": "1089783", "29048": "1098381",
+  "29074": "1098382", "29075": "1098381", "29076": "1098379", "29077": "1098379",
+  "29078": "1098379", "29079": "1109829", "52165": "88913", "52166": "1094301",
+  "52174": "1084500", "52187": "85094", "52188": "1087266", "52208": "1109829",
+  "52212": "1111345", "52257": "1109766", "52368": "1098381", "52369": "1111345",
+  "52372": "1098379", "52373": "1098379", "52408": "1087266", "52410": "1087263",
+  "52454": "1110563", "52457": "85083", "52507": "1070696", "52513": "1091528",
+  "52514": "1091528", "52518": "88913", "52520": "88913", "52547": "1056244",
+  "52550": "1056244", "52551": "1056244", "52572": "1056244", "52637": "85780",
+  "52638": "88913", "52639": "81825", "52640": "1037489", "52642": "88913",
+  "52651": "88913", "52652": "88913", "52654": "1084500", "52659": "1084500",
+  "52664": "88913", "52665": "1052489", "52667": "1110563", "52668": "83726",
+  "52672": "85083", "52676": "85083", "52678": "81825", "52680": "82757",
+  "52700": "1087266", "52703": "1065323", "52718": "82882", "52719": "85094",
+  "52720": "85094", "52721": "88464", "52723": "81825", "52724": "1109767",
+  "52728": "88913", "52732": "81825", "52735": "88707", "52736": "88707",
+  "52737": "83726", "52740": "82882", "52741": "83726", "52770": "1110839",
+  "52779": "1110563", "52780": "1055801", "52795": "1109767", "52801": "83803",
+  "52811": "1094301", "52815": "1109829", "52820": "1110563", "52821": "1110563",
+  "52822": "1056244", "52823": "82882", "52824": "1111345", "52825": "1055801",
+  "52827": "1055801", "52828": "1084237", "52829": "1084233", "52830": "82882",
+  "52837": "1091771", "52838": "1056259", "52845": "1109767", "52851": "1037490",
+  "52852": "1045562", "52855": "88913", "52857": "1055801", "52858": "1055801",
+  "52860": "1056244", "52862": "1056259", "52863": "1055801", "52864": "1056259",
+  "52865": "1055801", "52866": "1098379", "52867": "1055801", "52868": "1056259",
+  "52869": "1098379", "52870": "88707", "52871": "1111345", "52872": "1098381",
+  "52873": "1098379", "52877": "1055801", "52879": "1063723", "52882": "1091733",
+  "52885": "1037490", "52886": "1063458", "52887": "1063458", "52888": "1063457",
+  "52889": "1063458", "52892": "1037490", "52893": "1063457", "52894": "1098381",
+  "52903": "1063457", "52904": "88913", "52906": "1065323", "52914": "1056244",
+  "52920": "1056244", "52923": "1037489", "52924": "1037489", "52929": "88913",
+  "52930": "1110564", "52941": "1053980", "52946": "1088627", "52951": "88913",
+  "52952": "1063459", "52953": "1054437", "53364": "1098382", "53365": "1098381",
+  "53366": "1098379", "53367": "1098379", "53369": "1110839", "53783": "1109829",
+  "53785": "1109829", "53787": "1109829", "53788": "1065323", "53789": "1109829",
+  "53794": "1055801", "54078": "1104553", "54079": "1105752", "54086": "1109829",
+  "54087": "1109767", "54088": "1087266", "54089": "1098153", "54127": "1109829",
+  "54128": "1098153", "54140": "1098382", "54154": "1098382", "54160": "88913",
+  "54166": "1051761", "54167": "1051761", "54168": "1105752", "54177": "1110796",
+  "58009": "1055801", "58014": "1111345", "58017": "1107611", "58018": "1109767",
+  "58026": "1091771", "58029": "85094", "58031": "1084500", "58051": "1084500",
+  "58080": "1084500", "58140": "1094301", "58142": "1065323", "58143": "1055801",
+  "58145": "1091733", "58150": "1109829", "58155": "88707", "58164": "1051761",
+  "58176": "1088620", "58177": "88707", "58178": "1110839", "58179": "88707",
+  "58180": "1111345", "58181": "1113469", "58182": "1110839", "58183": "1110839",
+  "58184": "1111345", "58185": "85094", "58187": "85094", "58193": "85094",
+  "58194": "85094", "58198": "1051761", "58500": "1111345", "59111": "1109829"
 };
 
 // Solo 2 turnos reales: Mañana (corta fijo a las 14h) y Tarde (arranca fijo a las 14h)
@@ -1284,6 +1512,7 @@ const state = {
   sort: { table: "articulo", col: "kg", dir: "desc" },
   sortOF: { col: "mermaPct", dir: "desc" },
   sortTramo: { col: "averias", dir: "desc" },
+  sortBandeja: { col: "uds", dir: "desc" },
   drill: { monthKey: null, weekKey: null, dayKey: null },
   ui: {
     expandedAreas: new Set(), expandedPlantas: new Set(),
@@ -1302,7 +1531,9 @@ const state = {
     // Indicador del gráfico de tendencia del Resumen y cada cuánto se agrupa
     tendencia: "prod.merma",
     tendenciaGrano: "auto",
-    tendenciaDesglose: "linea"
+    tendenciaDesglose: "linea",
+    // Bandeja elegida en la tabla de la pestaña Bandejas (null = total de todas)
+    bandejaSel: null
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -1484,12 +1715,12 @@ document.querySelectorAll("#tabbar button").forEach(btn => {
 
 // Atajos 1-5 para saltar de pestaña sin tocar el ratón (no dispara si se está
 // escribiendo en un campo de búsqueda o de número).
-const TAB_ORDER = ["resumen", "lineas", "paros", "historico", "detalle"];
+const TAB_ORDER = ["resumen", "lineas", "paros", "historico", "detalle", "bandejas"];
 document.addEventListener("keydown", e => {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   const t = e.target.tagName;
   if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") return;
-  const i = "12345".indexOf(e.key);
+  const i = "123456".indexOf(e.key);
   if (i >= 0 && document.getElementById("tabbar").hidden === false) setTab(TAB_ORDER[i]);
 });
 
@@ -2559,6 +2790,29 @@ function aggregateByArticulo(rows) {
   });
 }
 
+// Igual que aggregateByArticulo pero agrupado por CÓDIGO DE BANDEJA en vez de
+// por artículo: varios artículos comparten el mismo molde/envase, así que
+// aquí es donde se suman de verdad. Los artículos sin bandeja conocida en
+// ARTICULO_BANDEJA se excluyen: no se sabe qué envase gastaron, así que no se
+// les puede atribuir a ninguno.
+function aggregateByBandeja(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const cod = ARTICULO_BANDEJA[r.producto];
+    if (!cod) continue;
+    if (!map.has(cod)) map.set(cod, { cod, desc: BANDEJA_TIPOS[cod] || cod, rows: [], articulos: new Set() });
+    const g = map.get(cod);
+    g.rows.push(r);
+    g.articulos.add(r.producto);
+  }
+  return [...map.values()].map(g => ({
+    cod: g.cod, desc: g.desc,
+    uds: sum(g.rows, r => r.udsCaja),
+    kg: sum(g.rows, r => r.kg),
+    nArticulos: g.articulos.size
+  }));
+}
+
 /* ============================================================
    7. RENDER — KPI TILES
    ============================================================ */
@@ -3201,6 +3455,100 @@ function renderTableArticulo(data) {
   });
 }
 
+/* ============================================================
+   BANDEJAS: consumo diario por tipo de bandeja (envase)
+   ============================================================ */
+
+function renderTableBandeja(data) {
+  const el = document.getElementById("tableBandeja");
+  setCount("countBandeja", data.length ? `${fmtInt(data.length)} tipos de bandeja` : "");
+  if (!data.length) { el.innerHTML = `<div class="empty-note">Ningún artículo de la selección tiene bandeja asignada en el listado.</div>`; return; }
+
+  const { col, dir } = state.sortBandeja;
+  const key = { uds: d => d.uds, kg: d => d.kg, articulos: d => d.nArticulos }[col];
+  const sorted = data.slice().sort((a, b) => (key(a) - key(b)) * (dir === "asc" ? 1 : -1));
+  const totalUds = sum(data, d => d.uds), totalArt = sum(data, d => d.nArticulos);
+
+  const rows = sorted.map(d => `
+    <tr class="row-clickable" data-cod="${escapeHtml(d.cod)}" title="Ver evolución diaria de esta bandeja">
+      <td>${escapeHtml(d.cod)}</td>
+      <td>${escapeHtml(truncate(d.desc, 46))}</td>
+      <td>${fmtInt(d.nArticulos)}</td>
+      <td>${fmtInt(d.uds)}</td>
+      <td>${totalUds > 0 ? fmtPct(d.uds / totalUds * 100) : "—"}</td>
+    </tr>`).join("");
+
+  const dirIndicator = c => state.sortBandeja.col === c ? (state.sortBandeja.dir === "asc" ? "▲" : "▼") : "";
+
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Bandeja</th><th>Descripción</th>
+      <th data-col="articulos">Artículos ${dirIndicator("articulos")}</th>
+      <th data-col="uds">Uds. ${dirIndicator("uds")}</th>
+      <th>% del total</th>
+    </tr></thead>
+    <tbody>${rows}
+      <tr class="total-row"><td colspan="2">TOTAL</td><td>${fmtInt(totalArt)}</td><td>${fmtInt(totalUds)}</td><td>100 %</td></tr>
+    </tbody></table>`;
+
+  el.querySelectorAll("th[data-col]").forEach(th => {
+    th.addEventListener("click", () => {
+      const c = th.dataset.col;
+      if (state.sortBandeja.col === c) state.sortBandeja.dir = state.sortBandeja.dir === "asc" ? "desc" : "asc";
+      else { state.sortBandeja.col = c; state.sortBandeja.dir = "desc"; }
+      renderTableBandeja(data);
+    });
+  });
+  el.querySelectorAll("tr[data-cod]").forEach(tr => {
+    tr.addEventListener("click", () => {
+      // Clic de nuevo sobre la misma fila quita el filtro y vuelve al total.
+      state.ui.bandejaSel = state.ui.bandejaSel === tr.dataset.cod ? null : tr.dataset.cod;
+      renderAll(true);
+    });
+  });
+}
+
+function renderBandejas(rows) {
+  const mapeadas = rows.filter(r => ARTICULO_BANDEJA[r.producto]);
+  const articulosTotal = new Set(rows.map(r => r.producto)).size;
+  const articulosCubiertos = new Set(mapeadas.map(r => r.producto)).size;
+  setCount("bandejasCobertura", articulosTotal
+    ? `${fmtInt(articulosCubiertos)} de ${fmtInt(articulosTotal)} artículos de la selección tienen bandeja asignada en el listado`
+    : "");
+
+  const data = aggregateByBandeja(rows).sort((a, b) => b.uds - a.uds);
+  renderTableBandeja(data);
+
+  const sel = state.ui.bandejaSel;
+  // Si la bandeja elegida no tiene datos con el filtro actual (cambió la
+  // fecha/línea/turno), se vuelve al total en vez de dejar un gráfico vacío
+  // sin explicar por qué.
+  const elegida = sel ? data.find(d => d.cod === sel) : null;
+  if (sel && !elegida) state.ui.bandejaSel = null;
+
+  const serie = bandejaTimeline(rows, elegida ? elegida.cod : null);
+  const totalUds = sum(mapeadas, r => r.udsCaja);
+  const titulo = elegida
+    ? `Bandeja ${escapeHtml(elegida.cod)} · ${escapeHtml(truncate(elegida.desc, 40))} <button class="ghost crumb" id="btnBandejaClear" title="Volver a todas las bandejas">↩ Ver total</button>`
+    : "Consumo diario de bandejas";
+  const sub = elegida
+    ? `${fmtInt(elegida.uds)} unidades en la selección — clic en la fila de nuevo para quitar el filtro`
+    : `${fmtInt(totalUds)} unidades en total — suma de todos los tipos, por día`;
+
+  renderLineChart("chartBandejaTendencia", titulo, sub,
+    [{
+      label: elegida ? elegida.desc : "Total bandejas", color: cssVar("--s1"),
+      points: serie.map(p => ({ x: p.x, y: p.uds, etiqueta: p.etiqueta }))
+    }],
+    {
+      formatX: x => fmtDayShort(new Date(x)), formatY: fmtInt,
+      tooltip: (p, s) => `<strong>${escapeHtml(p.etiqueta)}</strong><br>${escapeHtml(s.label)}: ${fmtInt(p.y)} uds`
+    });
+
+  const btnClear = document.getElementById("btnBandejaClear");
+  if (btnClear) btnClear.addEventListener("click", e => { e.stopPropagation(); state.ui.bandejaSel = null; renderAll(true); });
+}
+
 /* ---------- Histórico de merma del artículo buscado ----------
    Aparece al escribir en el buscador de la pestaña Detalle. A propósito usa
    getScopedRows() y NO el rango Desde/Hasta: la tabla de al lado responde
@@ -3260,6 +3608,20 @@ function paroTimeline(rows, porSemana) {
       ofs: new Set(g.rows.map(r => r.of).filter(Boolean)).size
     };
   });
+}
+
+// Evolución diaria del consumo de bandejas: el total de la selección, o solo
+// la bandeja elegida en la tabla si se pasa `cod`. Siempre por día (no por
+// semana/mes): es justo lo que se pidió, y el histórico de Mapex cargado no
+// llega a necesitar agrupar más para seguir leyéndose.
+function bandejaTimeline(rows, cod) {
+  const mapeadas = rows.filter(r => {
+    const c = ARTICULO_BANDEJA[r.producto];
+    return c && (!cod || c === cod);
+  });
+  return agruparPorPeriodo(mapeadas, false).map(g => ({
+    x: g.orden, etiqueta: g.etiqueta, uds: sum(g.rows, r => r.udsCaja)
+  }));
 }
 
 function resetMermaDrill() {
@@ -4951,6 +5313,7 @@ function renderAll(skipFilters) {
   renderTableArticulo(porArticulo);
   renderTableOF(rows);
   renderGraficoArticulo();
+  renderBandejas(rows);
 
   const ctFiltered = state.ctRows.length ? getFilteredCtRows() : [];
   if (state.ctRows.length) {

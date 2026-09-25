@@ -890,5 +890,58 @@ check("la tabla enseña la columna Box y los dos códigos de cada bandeja fusion
   tablaB.innerHTML.includes(">Box ") && fusionadas.every(([viejo]) => tablaB.innerHTML.includes("/ " + viejo)));
 state.ui.bandejasAbiertas = new Set();
 
+console.log("\n=== Stock en línea ===");
+const stock = sandbox.stockBandejas(productRows);
+// Uds. por día de cada bandeja, calculadas aquí por separado
+const udsPorDia = new Map();
+for (const r of productRows) {
+  const cod = sandbox.bandejaDeArticulo(r.producto);
+  if (!cod || !(r.udsCaja > 0)) continue;
+  if (!udsPorDia.has(cod)) udsPorDia.set(cod, new Map());
+  const m = udsPorDia.get(cod), k = r.periodo.getTime();
+  m.set(k, (m.get(k) || 0) + r.udsCaja);
+}
+check("el promedio diario es sobre los días que se gastó cada bandeja, y el máximo es su peor día",
+  stock.data.length === udsPorDia.size && stock.data.every(d => {
+    const v = [...udsPorDia.get(d.cod).values()];
+    return d.dias === v.length && Math.abs(d.promUds - v.reduce((a, b) => a + b, 0) / v.length) < 1e-6 && d.maxUds === Math.max(...v);
+  }),
+  stock.data.length + " bandejas en " + stock.nDias + " días");
+const b1110797 = stock.data.find(d => d.cod === "1110797");
+check("con box conocido, box/día = uds./día ÷ bandejas por box",
+  Math.abs(b1110797.boxDia - b1110797.promUds / 2560) < 1e-9 && Math.abs(b1110797.boxMax - b1110797.maxUds / 2560) < 1e-9,
+  "1110797: " + fmtNum(b1110797.boxDia) + " box/día, " + fmtNum(b1110797.boxMax) + " el peor día");
+check("1 box en línea solo si ni el peor día se gastó uno entero; si no, 2",
+  stock.data.every(d => d.porBox ? d.enLinea === (d.maxUds < d.porBox ? 1 : 2) : d.enLinea === null)
+    && stock.data.some(d => d.enLinea === 1) && stock.data.some(d => d.enLinea === 2),
+  stock.data.filter(d => d.enLinea === 2).length + " con 2 box, " + stock.data.filter(d => d.enLinea === 1).length + " con 1");
+check("con 1 box, cada cuántos días reponer aguanta aunque todos fuesen el peor día",
+  stock.data.filter(d => d.enLinea === 1).every(d => {
+    const m = sandbox.reposicionTexto(d).match(/cada (\d+) días/);
+    return (m ? +m[1] : 1) * d.boxMax <= 1;
+  }));
+check("con 2 box, las bajadas de un día normal y del peor día cubren lo que se gasta",
+  stock.data.filter(d => d.enLinea === 2).every(d => {
+    const t = sandbox.reposicionTexto(d), normal = +t.match(/^(\d+) al día/)[1], hasta = t.match(/hasta (\d+)/);
+    return normal >= d.boxDia && (hasta ? +hasta[1] : normal) >= d.boxMax;
+  }));
+const rep = (enLinea, boxDia, boxMax) => sandbox.reposicionTexto({ enLinea, boxDia, boxMax });
+check("la reposición se lee como se habla",
+  rep(2, 2.5, 4.49) === "3 al día · hasta 5" && rep(2, 1.97, 2) === "2 al día" && rep(2, 0.89, 1.2) === "1 al día · hasta 2"
+    && rep(2, 1.15, 1.25) === "2 al día"
+    && rep(1, 0.28, 0.35) === "1 cada 2 días" && rep(1, 0.8, 0.93) === "1 al día",
+  [rep(2, 2.5, 4.49), rep(1, 0.28, 0.35)].join(" / "));
+let boxPeriodo = 0;
+const diasBox = new Map();
+for (const r of productRows) {
+  const cod = sandbox.bandejaDeArticulo(r.producto), q = POR_BOX[cod];
+  if (!q || !(r.udsCaja > 0)) continue;
+  boxPeriodo += r.udsCaja / q;
+  diasBox.set(r.periodo.getTime(), (diasBox.get(r.periodo.getTime()) || 0) + r.udsCaja / q);
+}
+check("el total es lo que baja el almacén: box del periodo ÷ días, y el peor día sumando todas",
+  Math.abs(stock.boxDiaTotal - boxPeriodo / stock.nDias) < 1e-9 && Math.abs(stock.boxMaxTotal - Math.max(...diasBox.values())) < 1e-9,
+  fmtNum(stock.boxDiaTotal) + " box en un día normal, " + fmtNum(stock.boxMaxTotal) + " el peor");
+
 console.log(fallos === 0 ? "\n✅ Todas las comprobaciones pasan." : `\n❌ ${fallos} comprobación(es) fallan.`);
 process.exit(fallos === 0 ? 0 : 1);

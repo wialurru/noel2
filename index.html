@@ -237,9 +237,9 @@
   .row-controls { flex-shrink: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
   /* Solo se muestra el nivel de histórico / la sub-tabla de detalle activos */
-  .hist-level, .detalle-sub, .paros-sub { display: none; }
+  .hist-level, .detalle-sub, .paros-sub, .bandejas-sub { display: none; }
   .hist-level.active { display: grid; }
-  .detalle-sub.active, .paros-sub.active { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }
+  .detalle-sub.active, .paros-sub.active, .bandejas-sub.active { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }
   .detalle-sub.stack.active { display: grid; }
   @media (max-width: 1180px) {
     .grid-2x3 { grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr); }
@@ -455,6 +455,7 @@
   .bandeja-alias { font-size: 11px; color: var(--text-muted); }
   tbody tr.bandeja-art td { font-size: 11.5px; color: var(--text-secondary); background: color-mix(in srgb, var(--text-primary) 2.5%, transparent); }
   tbody tr.bandeja-art td:first-child { padding-left: 42px; }
+  tbody tr.sin-box td { color: var(--text-muted); }
   .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
   .pill.good { color: var(--good-text); background: color-mix(in srgb, var(--good) 14%, transparent); }
   .pill.bad { color: var(--critical); background: color-mix(in srgb, var(--critical) 14%, transparent); }
@@ -822,18 +823,34 @@
     <!-- ============ BANDEJAS: consumo diario por tipo de bandeja/envase ============ -->
     <section class="view" data-view="bandejas">
       <div class="row-controls">
+        <div class="seg" id="bandejasSeg" role="group" aria-label="Vista de bandejas">
+          <button data-sub="consumo">Consumo</button>
+          <button data-sub="stock">Stock en línea</button>
+        </div>
         <span class="sub" id="bandejasCobertura"></span>
       </div>
-      <div class="grid-side">
+      <div class="bandejas-sub" data-sub="consumo">
+        <div class="grid-side">
+          <div class="panel" style="flex:1;min-height:0;">
+            <header>
+              <h3>Totales por tipo de bandeja</h3>
+              <span class="sub">Suma de unidades de los artículos que comparten cada bandeja · clic en una bandeja para desplegar sus artículos y ver su evolución diaria</span>
+              <span class="right row-count" id="countBandeja"></span>
+            </header>
+            <div class="body flush"><div id="tableBandeja"></div></div>
+          </div>
+          <div class="card chart-card" id="chartBandejaTendencia"></div>
+        </div>
+      </div>
+      <div class="bandejas-sub" data-sub="stock">
         <div class="panel" style="flex:1;min-height:0;">
           <header>
-            <h3>Totales por tipo de bandeja</h3>
-            <span class="sub">Suma de unidades de los artículos que comparten cada bandeja · clic en una bandeja para desplegar sus artículos y ver su evolución diaria</span>
-            <span class="right row-count" id="countBandeja"></span>
+            <h3>Stock en línea por referencia</h3>
+            <span class="sub">Promedio en los días que se gastó cada bandeja · 1 box en línea si ni el día de más consumo se llegó a gastar uno entero; si no, 2</span>
+            <span class="right row-count" id="countStockBandeja"></span>
           </header>
-          <div class="body flush"><div id="tableBandeja"></div></div>
+          <div class="body flush"><div id="tableStockBandeja"></div></div>
         </div>
-        <div class="card chart-card" id="chartBandejaTendencia"></div>
       </div>
     </section>
 
@@ -1594,7 +1611,8 @@ const state = {
     // Bandeja elegida en la tabla de la pestaña Bandejas (null = total de todas)
     bandejaSel: null,
     // Bandejas desplegadas en esa tabla (puede haber varias a la vez)
-    bandejasAbiertas: new Set()
+    bandejasAbiertas: new Set(),
+    bandejasSub: "consumo"   // sub-vista activa en Bandejas: consumo|stock
   },
   // Umbrales de alerta, configurables desde ⚙ y persistidos en localStorage.
   // Se separan del resto del estado a propósito: son preferencias del usuario,
@@ -1815,6 +1833,16 @@ function setParosSub(sub) {
   document.querySelectorAll(".paros-sub").forEach(g => g.classList.toggle("active", g.dataset.sub === sub));
   syncParoCatVisible();
 }
+
+function setBandejasSub(sub) {
+  state.ui.bandejasSub = sub;
+  document.querySelectorAll("#bandejasSeg button").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
+  document.querySelectorAll(".bandejas-sub").forEach(g => g.classList.toggle("active", g.dataset.sub === sub));
+}
+
+document.querySelectorAll("#bandejasSeg button").forEach(btn => {
+  btn.addEventListener("click", () => setBandejasSub(btn.dataset.sub));
+});
 
 // El filtro de categoría solo manda sobre el Pareto de motivos; en la vista de
 // turnos se enseñan siempre las cuatro para poder compararlas.
@@ -2883,6 +2911,45 @@ function aggregateByBandeja(rows) {
   });
 }
 
+// Para fijar el stock en línea. El promedio diario es sobre los días en que se
+// gastó cada bandeja, no sobre todo el periodo: una bandeja que solo entra dos
+// días por semana necesita en esos dos días lo que gasta en ellos, y eso es lo
+// que tiene que haber en línea. 1 box en línea si ni el día de más consumo se
+// llegó a gastar uno entero; si no, 2.
+function stockBandejas(rows) {
+  const porBandeja = new Map(), dias = new Set(), boxPorDia = new Map();
+  for (const r of rows) {
+    const cod = bandejaDeArticulo(r.producto);
+    if (!cod || !(r.udsCaja > 0)) continue;
+    const dia = r.periodo.getTime();
+    dias.add(dia);
+    if (!porBandeja.has(cod)) porBandeja.set(cod, new Map());
+    const m = porBandeja.get(cod);
+    m.set(dia, (m.get(dia) || 0) + r.udsCaja);
+    const porBox = BANDEJAS_POR_BOX[cod];
+    if (porBox) boxPorDia.set(dia, (boxPorDia.get(dia) || 0) + r.udsCaja / porBox);
+  }
+  const data = [...porBandeja].map(([cod, m]) => {
+    const uds = [...m.values()];
+    const porBox = BANDEJAS_POR_BOX[cod] || null;
+    const promUds = sum(uds, u => u) / uds.length, maxUds = Math.max(...uds);
+    return {
+      cod, antiguo: BANDEJA_ANTIGUA[cod] || null, desc: BANDEJA_TIPOS[cod] || cod,
+      dias: uds.length, promUds, maxUds, porBox,
+      boxDia: porBox ? promUds / porBox : null,
+      boxMax: porBox ? maxUds / porBox : null,
+      enLinea: porBox ? (maxUds < porBox ? 1 : 2) : null
+    };
+  });
+  // Todas las bandejas con box juntas: los box que baja el almacén en un día
+  const boxDias = [...boxPorDia.values()];
+  return {
+    data, nDias: dias.size,
+    boxDiaTotal: dias.size ? sum(boxDias, b => b) / dias.size : 0,
+    boxMaxTotal: Math.max(0, ...boxDias)
+  };
+}
+
 /* ============================================================
    7. RENDER — KPI TILES
    ============================================================ */
@@ -3609,6 +3676,63 @@ function renderTableBandeja(data) {
       renderBandejas(getFilteredRows());
     });
   });
+}
+
+// Cada cuánto hay que bajar un box. Con 2 en línea se repone el que se vacía:
+// las veces de un día normal y, si son más, las del día de más consumo, siempre
+// redondeando hacia arriba (1,2 box al día son 2 bajadas, no 1). Con 1, cada
+// cuántos días de producción, contando como si todos fuesen el de más
+// consumo, para que no llegue a faltar.
+function reposicionTexto(d) {
+  if (d.enLinea === 2) {
+    const normal = Math.ceil(d.boxDia), pico = Math.ceil(d.boxMax);
+    return `${normal} al día` + (pico > normal ? ` · hasta ${pico}` : "");
+  }
+  const cada = Math.floor(1 / d.boxMax);
+  return cada <= 1 ? "1 al día" : `1 cada ${cada} días`;
+}
+
+function renderStockBandejas(rows) {
+  const el = document.getElementById("tableStockBandeja");
+  const { data, nDias, boxDiaTotal, boxMaxTotal } = stockBandejas(rows);
+  const conBox = data.filter(d => d.porBox).sort((a, b) => b.boxDia - a.boxDia);
+  const sinBox = data.filter(d => !d.porBox).sort((a, b) => b.promUds - a.promUds);
+  setCount("countStockBandeja", data.length ? `${fmtInt(conBox.length)} referencias con box · ${fmtInt(sinBox.length)} sin él` : "");
+  if (!data.length) { el.innerHTML = `<div class="empty-note">Ningún artículo de la selección tiene bandeja asignada en el listado.</div>`; return; }
+
+  const fila = d => `
+    <tr${d.porBox ? "" : ` class="sin-box"`}>
+      <td>${escapeHtml(d.cod)}${d.antiguo ? ` <span class="bandeja-alias" title="Código antiguo de la misma bandeja: se cuentan juntos">/ ${escapeHtml(d.antiguo)}</span>` : ""}</td>
+      <td>${escapeHtml(truncate(d.desc, 46))}</td>
+      <td>${fmtInt(d.dias)} de ${fmtInt(nDias)}</td>
+      <td>${fmtInt(d.promUds)}</td>
+      <td>${fmtBox(d.boxDia)}</td>
+      <td>${fmtBox(d.boxMax)}</td>
+      <td>${d.porBox ? d.enLinea + " box" : "—"}</td>
+      <td>${d.porBox ? reposicionTexto(d) : "falta la cantidad por box"}</td>
+    </tr>`;
+  const dos = conBox.filter(d => d.enLinea === 2).length;
+
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Bandeja</th><th>Descripción</th>
+      <th title="Días en que se gastó esta bandeja, de los días con consumo de bandejas en la selección">Días</th>
+      <th title="Promedio de bandejas gastadas en los días que se gastó">Uds./día</th>
+      <th title="Uds./día ÷ bandejas que trae cada box del proveedor">Box/día</th>
+      <th title="Box gastados el día de más consumo">Máx. día</th>
+      <th title="1 box si ni el día de más consumo se gastó uno entero; si no, 2">En línea</th>
+      <th title="Cuántas veces hay que bajar un box: con 2 en línea, en un día normal (y en el de más consumo); con 1, cada cuántos días de producción para que no falte ni el día de más consumo">Reposición</th>
+    </tr></thead>
+    <tbody>${conBox.map(fila).join("")}${sinBox.map(fila).join("")}
+      <tr class="total-row">
+        <td colspan="2">TOTAL · ${fmtInt(conBox.length)} referencias con box</td>
+        <td>${fmtInt(nDias)} días</td><td></td>
+        <td title="Box que se bajan en un día normal, todas las referencias juntas">${fmtBox(boxDiaTotal)}</td>
+        <td title="Box que se bajaron el día de más consumo, todas juntas">${fmtBox(boxMaxTotal)}</td>
+        <td>${fmtInt(sum(conBox, d => d.enLinea))} box</td>
+        <td>${fmtInt(dos)} con 2 · ${fmtInt(conBox.length - dos)} con 1</td>
+      </tr>
+    </tbody></table>`;
 }
 
 function renderBandejas(rows) {
@@ -5418,6 +5542,7 @@ function renderAll(skipFilters) {
   renderTableOF(rows);
   renderGraficoArticulo();
   renderBandejas(rows);
+  renderStockBandejas(rows);
 
   const ctFiltered = state.ctRows.length ? getFilteredCtRows() : [];
   if (state.ctRows.length) {
@@ -5949,6 +6074,7 @@ setTab("resumen");
 setHistLevel("mes");
 setDetalleSub("articulo");
 setParosSub("motivos");
+setBandejasSub("consumo");
 applyCtAvailability();
 autoLoad();
 </script>
